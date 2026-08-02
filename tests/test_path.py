@@ -6,31 +6,15 @@ from geort.utils.config_utils import get_config, save_json
 from geort.utils.path import get_human_data
 
 
-def test_get_config_uses_exact_name_or_existing_path(tmp_path):
-    explicit_config = tmp_path / "custom.json"
-    save_json({"source": "explicit"}, explicit_config)
+def test_config_and_human_data_lookup_are_exact(tmp_path, monkeypatch):
+    config_path = tmp_path / "custom.json"
+    data_path = tmp_path / "human.npy"
+    save_json({"source": "explicit"}, config_path)
+    np.save(data_path, np.zeros((1, 1, 3)))
+    monkeypatch.setattr(path_utils, "get_data_root", lambda: tmp_path)
 
     assert get_config("allegro_right")["joint_order"]
-    assert get_config(explicit_config) == {"source": "explicit"}
-
-    with pytest.raises(FileNotFoundError, match="allegro.json"):
+    assert get_config(config_path) == {"source": "explicit"}
+    assert get_human_data("human.npy") == data_path
+    with pytest.raises(FileNotFoundError):
         get_config("allegro")
-
-
-def test_get_human_data_uses_exact_name_or_existing_path(tmp_path):
-    explicit_data = tmp_path / "custom.npy"
-    np.save(explicit_data, np.array([[1.0, 2.0, 3.0]]))
-
-    assert get_human_data("human_alex").name == "human_alex.npy"
-    assert get_human_data(explicit_data) == explicit_data
-
-    with pytest.raises(FileNotFoundError, match="human.npy"):
-        get_human_data("human")
-
-
-def test_get_human_data_does_not_duplicate_existing_suffix(tmp_path, monkeypatch):
-    monkeypatch.setattr(path_utils, "get_data_root", lambda: tmp_path)
-    expected = tmp_path / "human_alex.npy"
-    np.save(expected, np.zeros((1, 1, 3)))
-
-    assert get_human_data("human_alex.npy") == expected

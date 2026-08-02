@@ -4,18 +4,18 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+import json
+import random
 import numpy as np
-import sapien.core as sapien
-from torch.utils.data import DataLoader
 import torch
 import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 from geort.utils.hand_utils import get_entity_by_name, get_active_joints, get_active_joint_indices
 from geort.utils.path import get_human_data 
 from geort.utils.config_utils import get_config, save_json
 from geort.model import FKModel, IKModel 
-from geort.env.hand import HandKinematicModel
 from geort.loss import chamfer_distance
 from geort.formatter import HandFormatter
 from geort.dataset import RobotKinematicsDataset, MultiPointDataset
@@ -24,6 +24,67 @@ from tqdm import tqdm
 import os
 from pathlib import Path 
 import math
+
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+def capture_rng_state():
+    return {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+        "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+    }
+
+
+def restore_rng_state(state):
+    random.setstate(state["python"])
+    np.random.set_state(state["numpy"])
+    torch.set_rng_state(state["torch"])
+    if state["cuda"] is not None and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(state["cuda"])
+
+
+def _json_default(value):
+    if isinstance(value, torch.Tensor) and value.numel() == 1:
+        return value.item()
+    if isinstance(value, np.generic):
+        return value.item()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def append_metrics(path, metrics):
+    with Path(path).open("a", encoding="utf-8") as file:
+        json.dump(metrics, file, default=_json_default)
+        file.write("\n")
+
+
+def save_training_state(path, model, optimizer, epoch):
+    torch.save(
+        {
+            "model_state": model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "epoch": epoch,
+            "rng_state": capture_rng_state(),
+        },
+        path,
+    )
+
+
+def load_training_state(path, model, optimizer, device):
+    state = torch.load(path, map_location=device, weights_only=False)
+    model.load_state_dict(state["model_state"])
+    optimizer.load_state_dict(state["optimizer_state"])
+    restore_rng_state(state["rng_state"])
+    return state["epoch"] + 1
 
 def merge_dict_list(dl):
     keys = dl[0].keys()
@@ -52,6 +113,8 @@ def generate_current_timestring():
 
 class GeoRTTrainer:
     def __init__(self, config):
+        from geort.env.hand import HandKinematicModel
+
         self.config = config
         self.hand = HandKinematicModel.build_from_config(self.config)
 

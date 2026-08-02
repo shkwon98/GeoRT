@@ -237,7 +237,7 @@ def test_resume_validation_happens_before_stream_construction(tmp_path, monkeypa
 
 
 def test_resume_does_not_overwrite_existing_config(tmp_path, monkeypatch):
-    from geort.model import IKModel
+    from geort.model import CollisionClassifier, FKModel, IKModel
     from geort.trainer import GeoRTTrainer, save_training_state
 
     config = _trainer_test_config()
@@ -257,14 +257,44 @@ def test_resume_does_not_overwrite_existing_config(tmp_path, monkeypatch):
     model = IKModel([[0, 1]])
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
     save_training_state(resume_dir / "training_state.pth", model, optimizer, epoch=0)
+    torch.save(FKModel([[0, 1]]).state_dict(), resume_dir / "fk_model.pth")
+    torch.save(CollisionClassifier(2).state_dict(), resume_dir / "collision_model.pth")
 
     monkeypatch.setattr(trainer, "_build_streams", lambda *args, **kwargs: ([], []))
-    monkeypatch.setattr(trainer, "get_robot_neural_fk_model", lambda: None)
-    monkeypatch.setattr(trainer, "get_collision_classifier", lambda: None)
+    monkeypatch.setattr(trainer, "get_robot_neural_fk_model", lambda: pytest.fail("used mutable FK cache"))
+    monkeypatch.setattr(trainer, "get_collision_classifier", lambda: pytest.fail("used mutable collision cache"))
     monkeypatch.setattr(trainer, "get_robot_pointcloud", lambda names: np.zeros((1, 2, 3)))
 
     assert trainer.train(human_path, epoch=1, val_fraction=0.0, resume=resume_dir) == resume_dir
     assert config_path.read_text() == original_config_text
+
+
+def test_resume_requires_frozen_model_snapshots_before_building_streams(tmp_path, monkeypatch):
+    from geort.model import IKModel
+    from geort.trainer import GeoRTTrainer, save_training_state
+
+    config = _trainer_test_config()
+    trainer = GeoRTTrainer.__new__(GeoRTTrainer)
+    trainer.config = config
+    trainer.device = torch.device("cpu")
+    trainer.checkpoint_dir = tmp_path
+    trainer.hand = _TrainerTestHand()
+    human_path = tmp_path / "human.npy"
+    np.save(human_path, np.zeros((2, 1, 3), dtype=np.float32))
+    resume_dir = tmp_path / "experiment"
+    resume_dir.mkdir()
+    (resume_dir / "config.json").write_text(json.dumps(_saved_trainer_config(config, human_path, 0.0)))
+    model = IKModel([[0, 1]])
+    save_training_state(
+        resume_dir / "training_state.pth",
+        model,
+        torch.optim.AdamW(model.parameters(), lr=1e-4),
+        epoch=0,
+    )
+    monkeypatch.setattr(trainer, "_build_streams", lambda *args, **kwargs: pytest.fail("streams built"))
+
+    with pytest.raises(FileNotFoundError, match="fk_model.pth"):
+        trainer.train(human_path, epoch=1, val_fraction=0.0, resume=resume_dir)
 
 
 def test_resolve_human_data_supports_nested_filename_in_data_dir(tmp_path):
@@ -294,6 +324,39 @@ def test_build_streams_routes_coverage_and_aligned_gestures(monkeypatch):
     np.testing.assert_array_equal(captured["points"], frames.transpose(1, 0, 2))
     np.testing.assert_array_equal(coverage_loader.dataset.points, frames.transpose(1, 0, 2))
     np.testing.assert_array_equal(gesture_loader.dataset.frames, frames)
+
+
+def test_build_streams_avoids_singleton_gesture_batch(monkeypatch):
+    from geort.dataset import MultiPointDataset
+    from geort.trainer import GeoRTTrainer
+
+    frames = np.zeros((2049, 2, 3), dtype=np.float32)
+    monkeypatch.setattr(
+        MultiPointDataset,
+        "from_points",
+        staticmethod(lambda points, n: MultiPointDataset(points)),
+    )
+
+    _, gesture_loader = GeoRTTrainer._build_streams(frames, shuffle=False)
+
+    assert gesture_loader.batch_size == 2047
+    assert [len(batch) for batch in gesture_loader] == [2047, 2]
+
+
+def test_train_rejects_single_aligned_frame_before_stream_build(tmp_path, monkeypatch):
+    from geort.trainer import GeoRTTrainer
+
+    trainer = GeoRTTrainer.__new__(GeoRTTrainer)
+    trainer.config = _trainer_test_config()
+    trainer.device = torch.device("cpu")
+    trainer.checkpoint_dir = tmp_path
+    trainer.hand = _TrainerTestHand()
+    human_path = tmp_path / "human.npy"
+    np.save(human_path, np.zeros((1, 1, 3), dtype=np.float32))
+    monkeypatch.setattr(trainer, "_build_streams", lambda *args, **kwargs: pytest.fail("streams built"))
+
+    with pytest.raises(ValueError, match="at least two"):
+        trainer.train(human_path, epoch=1, val_fraction=0.0)
 
 
 def test_frozen_fk_and_classifier_keep_input_gradients():

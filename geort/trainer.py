@@ -364,9 +364,12 @@ class GeoRTTrainer:
     def _build_streams(frames, shuffle):
         coverage = MultiPointDataset.from_points(frames.transpose(1, 0, 2), n=20000)
         gestures = GestureDataset(frames)
+        gesture_batch_size = min(2048, len(gestures))
+        while len(gestures) % gesture_batch_size == 1 and gesture_batch_size > 2:
+            gesture_batch_size -= 1
         return (
             DataLoader(coverage, batch_size=2048, shuffle=shuffle),
-            DataLoader(gestures, batch_size=min(2048, len(gestures)), shuffle=shuffle),
+            DataLoader(gestures, batch_size=gesture_batch_size, shuffle=shuffle),
         )
 
     def _compute_losses(
@@ -503,11 +506,17 @@ class GeoRTTrainer:
                 raise FileNotFoundError(f"Resume experiment directory not found: {save_dir}")
             config_path = save_dir / "config.json"
             state_path = save_dir / "training_state.pth"
+            fk_snapshot_path = save_dir / "fk_model.pth"
+            collision_snapshot_path = save_dir / "collision_model.pth"
             if not config_path.is_file():
                 raise FileNotFoundError(f"Resume configuration not found: {config_path}")
             validate_resume_config(export_config, load_json(config_path), training_metadata)
             if not state_path.is_file():
                 raise FileNotFoundError(f"Training state not found: {state_path}")
+            if not fk_snapshot_path.is_file():
+                raise FileNotFoundError(f"FK model snapshot not found: {fk_snapshot_path}")
+            if not collision_snapshot_path.is_file():
+                raise FileNotFoundError(f"Collision model snapshot not found: {collision_snapshot_path}")
         else:
             suffix = f"_{tag}" if tag else ""
             save_dir = self.checkpoint_dir / f"{self.config['name']}_{generate_current_timestring()}{suffix}"
@@ -521,11 +530,25 @@ class GeoRTTrainer:
             raise ValueError("Human recordings must have shape [T, landmarks, >=3] and contain configured human ids")
         human_frames = human_raw[:, human_ids, :3].astype(np.float32)
         train_frames, validation_frames = split_aligned_frames(human_frames, val_fraction, seed)
+        if len(train_frames) < 2:
+            raise ValueError("Training requires at least two aligned frames")
         train_coverage, train_gestures = self._build_streams(train_frames, shuffle=True)
         validation_streams = self._build_streams(validation_frames, shuffle=False) if len(validation_frames) else None
 
-        fk_model = self.get_robot_neural_fk_model()
-        collision_classifier = self.get_collision_classifier()
+        if resume is not None:
+            fk_model = FKModel(keypoint_joints=self.get_keypoint_info()["joint"]).to(self.device)
+            fk_model.load_state_dict(torch.load(fk_snapshot_path, map_location=self.device, weights_only=True))
+            fk_model = _freeze_model(fk_model)
+            collision_classifier = CollisionClassifier(len(lower)).to(self.device)
+            collision_classifier.load_state_dict(
+                torch.load(collision_snapshot_path, map_location=self.device, weights_only=True)
+            )
+            collision_classifier = _freeze_model(collision_classifier)
+        else:
+            fk_model = self.get_robot_neural_fk_model()
+            collision_classifier = self.get_collision_classifier()
+            torch.save(fk_model.state_dict(), save_dir / "fk_model.pth")
+            torch.save(collision_classifier.state_dict(), save_dir / "collision_model.pth")
         ik_model = IKModel(keypoint_joints=self.get_keypoint_info()["joint"]).to(self.device)
         optimizer = optim.AdamW(ik_model.parameters(), lr=1e-4)
         robot_points = torch.as_tensor(

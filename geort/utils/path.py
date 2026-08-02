@@ -34,8 +34,9 @@ def get_human_data(name_or_path):
     if path.is_file():
         return path
 
-    data_root = Path(get_data_root())
-    path = data_root / f"{name_or_path}.npy"
+    path = Path(get_data_root()) / path
+    if not path.suffix:
+        path = path.with_suffix(".npy")
     if path.is_file():
         return path
     raise FileNotFoundError(f"Human data file not found: {path}")

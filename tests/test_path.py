@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+import geort.utils.path as path_utils
 from geort.utils.config_utils import get_config, save_json
 from geort.utils.path import get_human_data
 
@@ -25,3 +26,11 @@ def test_get_human_data_uses_exact_name_or_existing_path(tmp_path):
 
     with pytest.raises(FileNotFoundError, match="human.npy"):
         get_human_data("human")
+
+
+def test_get_human_data_does_not_duplicate_existing_suffix(tmp_path, monkeypatch):
+    monkeypatch.setattr(path_utils, "get_data_root", lambda: tmp_path)
+    expected = tmp_path / "human_alex.npy"
+    np.save(expected, np.zeros((1, 1, 3)))
+
+    assert get_human_data("human_alex.npy") == expected

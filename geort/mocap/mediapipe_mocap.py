@@ -208,7 +208,7 @@ class MediaPipeMocap:
         elif key == ord('s'):
             self.status = 'recording'
         elif key == ord('e'):
-            self.record = 'idle'
+            self.status = 'idle'
 
         detection = None 
         if result["detected"]:

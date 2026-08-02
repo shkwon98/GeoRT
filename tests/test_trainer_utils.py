@@ -359,6 +359,61 @@ def test_train_rejects_single_aligned_frame_before_stream_build(tmp_path, monkey
         trainer.train(human_path, epoch=1, val_fraction=0.0)
 
 
+def test_fresh_training_rng_is_independent_of_auxiliary_cache_work(tmp_path, monkeypatch):
+    import geort.trainer as trainer_module
+
+    human_path = tmp_path / "human.npy"
+    np.save(human_path, np.zeros((2, 1, 3), dtype=np.float32))
+    initial_states = []
+    first_training_values = []
+
+    def capturing_ik(**kwargs):
+        model = torch.nn.Linear(2, 2)
+        initial_states.append({name: value.detach().clone() for name, value in model.state_dict().items()})
+        return model
+
+    monkeypatch.setattr(trainer_module, "IKModel", capturing_ik)
+
+    for run, consume_rng in enumerate((True, False)):
+        trainer = trainer_module.GeoRTTrainer.__new__(trainer_module.GeoRTTrainer)
+        trainer.config = _trainer_test_config()
+        trainer.device = torch.device("cpu")
+        trainer.checkpoint_dir = tmp_path / f"checkpoints-{run}"
+        trainer.hand = _TrainerTestHand()
+        monkeypatch.setattr(trainer, "_build_streams", lambda *args, **kwargs: ([], []))
+
+        def auxiliary_model():
+            if consume_rng:
+                random.random()
+                np.random.rand()
+                torch.rand(3)
+            return torch.nn.Linear(1, 1)
+
+        def robot_points(names):
+            if consume_rng:
+                random.random()
+                np.random.rand()
+                torch.rand(3)
+            return np.zeros((1, 2, 3))
+
+        def capture_training_rng(*args, **kwargs):
+            first_training_values.append((random.random(), np.random.rand(), torch.rand(1).item()))
+            return {name: 0.0 for name in ("total", "direction", "chamfer", "curvature", "pinch", "collision")}
+
+        monkeypatch.setattr(trainer, "get_robot_neural_fk_model", auxiliary_model)
+        monkeypatch.setattr(trainer, "get_collision_classifier", lambda: torch.nn.Linear(1, 1))
+        monkeypatch.setattr(trainer, "get_robot_pointcloud", robot_points)
+        monkeypatch.setattr(trainer, "_run_epoch", capture_training_rng)
+
+        trainer.train(human_path, epoch=1, seed=23, val_fraction=0.0)
+
+    assert all(
+        torch.equal(initial_states[0][name], initial_states[1][name])
+        for name in initial_states[0]
+    )
+    assert first_training_values[0] == first_training_values[1]
+
+
 def test_frozen_fk_and_classifier_keep_input_gradients():
     from geort.model import CollisionClassifier, FKModel
     from geort.trainer import _freeze_model

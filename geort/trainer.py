@@ -549,6 +549,7 @@ class GeoRTTrainer:
             collision_classifier = self.get_collision_classifier()
             torch.save(fk_model.state_dict(), save_dir / "fk_model.pth")
             torch.save(collision_classifier.state_dict(), save_dir / "collision_model.pth")
+            set_seed(seed)
         ik_model = IKModel(keypoint_joints=self.get_keypoint_info()["joint"]).to(self.device)
         optimizer = optim.AdamW(ik_model.parameters(), lr=1e-4)
         robot_points = torch.as_tensor(
@@ -558,6 +559,7 @@ class GeoRTTrainer:
         if resume is not None:
             start_epoch = load_training_state(state_path, ik_model, optimizer, self.device)
         else:
+            set_seed(seed)
             start_epoch = 0
 
         for current_epoch in range(start_epoch, epoch):

@@ -13,6 +13,7 @@ from mediapipe.tasks.python import vision
 import pyrealsense2 as rs
 import cv2
 from geort.mocap.camera.realsense import RealSenseCamera
+from geort.utils.path import get_hand_landmarker_path
 
 class MediaPipeHandProcessor:
     def __init__(self):
@@ -94,7 +95,7 @@ class MediaPipeHandDetector:
     HANDEDNESS_TEXT_COLOR = (88, 205, 54) # vibrant green
 
     def __init__(self):
-        base_options = python.BaseOptions(model_asset_path='hand_landmarker.task')
+        base_options = python.BaseOptions(model_asset_path=str(get_hand_landmarker_path()))
         options = vision.HandLandmarkerOptions(base_options=base_options,
                                             num_hands=2)
         self.detector = vision.HandLandmarker.create_from_options(options)

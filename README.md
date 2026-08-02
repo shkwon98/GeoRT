@@ -6,28 +6,47 @@ Welcome! This repository contains the code for the paper "Geometric Retargeting:
 
 ![Demo GIF](./images/demo.gif)
 ## Installation
-If you have already got a conda environment with torch, you just need these packages
-```
-pip install trimesh open3d sapien zmq
-pip install -e .
+Install the lightweight runtime first, then opt into the simulator or demo stack you need:
+
+GeoRT's pinned simulator-training environment supports CPython 3.8–3.11.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install .
+python -m pip install ".[training]"   # SAPIEN, Open3D, tqdm
+python -m pip install ".[mediapipe]"  # optional camera demo
 ```
 
-Otherwise, we recommend using a virtual environment to install the required packages. To install the required packages, run the following command:
+`requirements.txt` contains the pinned full environment. Manus/ROS integration remains separate; install `pyzmq` in that environment if you use it.
+
+GeoRT keeps generated recordings and checkpoints outside an installed wheel. Set `GEORT_HOME` to choose their writable location:
+
+```bash
+export GEORT_HOME="$PWD/.geort"
 ```
-conda create --name geort python=3.8
-pip install -r requirements.txt
-pip install -e .
-```
+
+Without `GEORT_HOME`, a source checkout uses its `data/` and `checkpoint/` directories; an installed wheel uses `~/.local/share/geort/` (or `$XDG_DATA_HOME/geort/`).
 ## Quick Overview
 Upon completion, you will be able to train GeoRT and deploy the checkpoint in a clean and straightforward way. 
 ### Training (1-2min):
+```bash
+python -m geort.trainer --hand allegro_right --human-data human_alex \
+  --tag geort_1 --device cpu --epoch 50
 ```
-python ./geort/trainer.py -hand allegro_right -human_data human_alex -ckpt_tag geort_1
-```
+
+This writes an experiment directory such as `$GEORT_HOME/checkpoint/allegro_right_YYYY-MM-DD_HH-MM-SS_geort_1/`.
+
 ### Deploy in code
-```
+```python
 import geort
-model = geort.load_model('geort_1')
+
+model = geort.load_model(
+    "/absolute/path/to/allegro_right_YYYY-MM-DD_HH-MM-SS_geort_1",
+    epoch=None,  # last.pth; use epoch=0 for epoch_0.pth
+    device="cpu",
+)
 mocap = ...
 qpos = model.forward(mocap.get())
 ```
@@ -42,13 +61,13 @@ Note: For the Allegro Hand, you can actually skip this step. However, please fol
 
 We just need to complete a quick setup process outlined below:
 
-1. Place your robot hand URDF file in the ``assets`` folder. (We have included the Allegro example there.)
-2. Create a config file named ``your_robot_name.json`` in the ``geort/config`` directory. Below is an example for the Allegro hand. For brevity, the details are omitted here, but you can refer to the [this](./geort/config/allegro_right.json) for full information. For setup instructions, please read [this](./geort/config/template.py).
+1. Keep your custom robot URDF and meshes in a directory you control. The built-in Allegro assets are bundled with the package.
+2. Create a config file such as ``your_robot_name.json``. Pass its path with ``--hand /path/to/your_robot_name.json``; do not write into an installed package directory. Below is an example for the Allegro hand. For brevity, the details are omitted here, but you can refer to [this](./geort/config/allegro_right.json) for full information. For setup instructions, please read [this](./geort/config/template.py).
 
 ```
 {
     "name": "allegro_right",  
-    "urdf_path": "./assets/allegro_right/allegro_hand_description_right.urdf",
+    "urdf_path": "/absolute/path/to/your_robot.urdf",
     "base_link": "base_link",
     "joint_order": [
         "joint_0.0", "joint_1.0", "joint_2.0", "joint_3.0",
@@ -70,17 +89,17 @@ We just need to complete a quick setup process outlined below:
 
 ```
 Now, you can run this command to visualize your hand.
-```
-python geort/env/hand.py --hand [YOUR_HAND_CONFIG_NAME]
+```bash
+python -m geort.env.hand --hand /path/to/your_robot_name.json
 ```
 such as 
-```
-python geort/env/hand.py --hand allegro_right
+```bash
+python -m geort.env.hand --hand allegro_right
 ```
 <span style="color:red"> If there is any segmentation error, please simplify the collision meshes or just remove all the `<collision>` fields in your URDF. </span> See the [Notes and Troubleshooting](#notes-and-troubleshooting) section.
 
 ### Step 2: Collect human hand mocap data.
-Now we need to collect some human hand data for training the retargeting model. We put an example human recording dataset in data folder. You can add your own data to that folder and here is a template python script to do this.
+Now we need to collect some human hand data for training the retargeting model. ``human_alex`` is bundled as an example. New recordings saved through GeoRT go to the writable data directory described above.
 
 ```
 import geort
@@ -111,40 +130,47 @@ During the data collection process, try to 1. fully stretch each finger and expl
 
 We understand that most users likely have their own mocap systems. However, for demonstration purposes, we provide a simple mocap solution based on MediaPipe. Please note, this is intended only for demo use and not for deployment; we will explain this in more detail later.
 
+```bash
+python -m geort.mocap.mediapipe_mocap --name human
 ```
-python ./geort/mocap/mediapipe_mocap.py --name human
-```
-to generate a dataset named ``human``. Refered to the file for instructions. When you see the pop-up window, press ``s`` to start recording and ``q`` to finish. 
+Install ``.[mediapipe]`` first. The command generates a dataset named ``human``. Refer to the file for instructions. When you see the pop-up window, press ``s`` to start recording and ``q`` to finish.
 
 **Note:** Please ensure that the hand frame orientation is consistent between your motion capture system and the hand URDF (but fortunately the origin does not require any alignment and you can just set it to palm center). In our provided mocap example, we support the **right** hand using the following convention:+Y axis: from the palm center to the thumb. +Z axis: from the palm center to the middle fingertip. +X axis: palm normal (pointing out of the palm). 
 
 ### Step 3: Train the Model
-Assuming you have placed ``your_robot_name.json`` in the ``geort/config`` folder as described in Step 1, and set ``data_output_name`` to ``human`` in Step 2, run the following command. TAG is the checkpoint id to use in later deployment.
+Assuming you saved ``your_robot_name.json`` somewhere writable as described in Step 1, and set ``data_output_name`` to ``human`` in Step 2, run the following command. ``TAG`` is appended to the generated experiment directory.
 
-```
-python ./geort/trainer.py -hand your_robot_name -human_data human -ckpt_tag TAG
+```bash
+python -m geort.trainer --hand /path/to/your_robot_name.json --human-data human \
+  --tag TAG --device cuda --epoch 50
 ```
 
 Let it train for about 30–50 epochs (approximately 1–2 minutes). You can press Ctrl+C to stop early if you wish. 
 
-If this is the first time you’re training for a new hand, an additional 5 minutes will be needed to train the neural FK model — this only happens once.
-In the command above, 
+If this is the first time you’re training for a new hand, an additional 5 minutes will be needed to train the neural FK model — this only happens once. The bundled Allegro FK checkpoint loads directly.
 
-For demo purpose, we have put ``human_alex.npy`` data in the ``data`` folder. For adapting it to a right Allegro hand, just run
+For demo purpose, ``human_alex`` is bundled with GeoRT. For adapting it to a right Allegro hand, just run
 
+```bash
+python -m geort.trainer --hand allegro_right --human-data human_alex \
+  --tag geort_1 --device cpu --epoch 50
 ```
-python ./geort/trainer.py -hand allegro_right -human_data human_alex -ckpt_tag geort_1
+This creates ``<checkpoint-root>/allegro_right_<timestamp>_geort_1/``. Resume the same experiment (with the same hand, data, seed, validation split, and loss settings) with:
+
+```bash
+python -m geort.trainer --hand allegro_right --human-data human_alex \
+  --resume /absolute/path/to/allegro_right_<timestamp>_geort_1 \
+  --device cpu --epoch 100
 ```
-This will generate a checkpoint named ``geort_1``. Later you can call ``model = geort.load_model('geort_1')`` to use it in your code.
 
 ### Step 4: Deploy!
 Ok, now we are all set. Use the following code to import and deploy the trained model. 
 
-```
+```python
 import geort
 
-checkpoint_tag = 'geort_1'          # TODO: your checkpoint name, assume it is 'TAG'
-model = geort.load_model(checkpoint_tag, epoch=50)  # set epoch=-1 to use the last model.
+experiment_dir = '/absolute/path/to/allegro_right_<timestamp>_geort_1'
+model = geort.load_model(experiment_dir, epoch=None, device='cpu')
 
 mocap = YourAwesomeMocap()      # TODO: your mocap.
 robot = YourRobustRobotHand()   # TODO: your robot.
@@ -158,12 +184,14 @@ while True:
 We provide some examples in ``geort/mocap/mediapipe_evaluation.py`` and ``geort/mocap/replay_evaluation``. If you have manus glove, you can also refer to ``geort/mocap/manus_evaluation.py``. We recommend (insist) you use a glove-based mocap system instead of MediaPipe, as for vision-based mocap there is significant input distribution shift during deployment!
 
 The simplest way for testing is to use the replay evaluation as below. This will show the retargeted trajectory in the viewer. 
+```bash
+python -m geort.mocap.replay_evaluation -hand allegro_right \
+  -ckpt_tag /absolute/path/to/YOUR_EXPERIMENT -data YOUR_TRAINING_DATA
 ```
-python ./geort/mocap/replay_evaluation.py -hand allegro_right -ckpt_tag YOUR_CKPT -data YOUR_TRAINING_DATA
-```
-For instance, if we have ``human.npy`` in the ``data`` folder
-```
-python ./geort/mocap/replay_evaluation.py -hand allegro_right -ckpt_tag YOUR_CKPT -data human
+For instance, if ``human`` is in the configured writable data directory
+```bash
+python -m geort.mocap.replay_evaluation -hand allegro_right \
+  -ckpt_tag /absolute/path/to/YOUR_EXPERIMENT -data human
 ```
 ## Contributing
 Feel free to contribute your robot model and mocap system to the GeoRT repository!
@@ -182,5 +210,3 @@ For any inquiries, please open an issue or contact the authors via email at ``zh
 
 ## License
 CC-by-NC license
-
-

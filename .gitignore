@@ -1,1 +1,21 @@
-*.pyc
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+
+.venv/
+build/
+dist/
+*.egg-info/
+
+.vscode/
+.superpowers/
+
+# Generated experiment data and checkpoints. Existing tracked examples stay tracked.
+data/*.npy
+data/*.npz
+checkpoint/*
+
+# Local review and planning notes; never stage these.
+docs/project-analysis.md
+docs/superpowers/

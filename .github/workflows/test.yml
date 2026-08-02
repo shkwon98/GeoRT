@@ -1,0 +1,37 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.11"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install --upgrade pip build pytest "numpy<2" "torch>=2.2,<2.4" tqdm
+      - run: python -m build --wheel
+      - run: |
+          python -m venv --system-site-packages .wheel-venv
+          .wheel-venv/bin/python -m pip install --no-deps dist/*.whl
+          smoke_dir="$(mktemp -d)"
+          (
+            cd "$smoke_dir"
+            GEORT_HOME="$smoke_dir/state" "$GITHUB_WORKSPACE/.wheel-venv/bin/python" -c '
+from geort.utils.config_utils import get_config
+from geort.utils.path import get_bundled_fk_checkpoint, get_hand_landmarker_path, get_human_data, resolve_resource_path
+
+config = get_config("allegro_right")
+assert resolve_resource_path(config["urdf_path"]).is_file()
+assert get_hand_landmarker_path().is_file()
+assert get_human_data("human_alex").is_file()
+assert get_bundled_fk_checkpoint("allegro_right").is_file()
+'
+          )
+      - run: python -m pytest -q

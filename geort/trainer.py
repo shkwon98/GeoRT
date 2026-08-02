@@ -23,7 +23,7 @@ from geort.formatter import HandFormatter
 from geort.loss import chamfer_distance, collision_free_loss, pinch_correspondence_loss
 from geort.model import CollisionClassifier, FKModel, IKModel
 from geort.utils.config_utils import get_config, load_json, save_json
-from geort.utils.path import get_checkpoint_root, get_data_root, get_human_data
+from geort.utils.path import get_bundled_fk_checkpoint, get_checkpoint_root, get_data_root, get_human_data
 from tqdm import tqdm
 
 
@@ -277,9 +277,14 @@ class GeoRTTrainer:
         
         # If the model exists, load it.
         fk_checkpoint_path = self.get_fk_checkpoint_path()
-        if fk_checkpoint_path.exists() and not force_train:
-            fk_model.load_state_dict(torch.load(fk_checkpoint_path, map_location=self.device, weights_only=True))
-
+        load_path = fk_checkpoint_path if fk_checkpoint_path.exists() else None
+        if load_path is None and not force_train:
+            try:
+                load_path = get_bundled_fk_checkpoint(self.config["name"])
+            except FileNotFoundError:
+                pass
+        if load_path is not None and not force_train:
+            fk_model.load_state_dict(torch.load(load_path, map_location=self.device, weights_only=True))
         else:
             # If the model does not exist, train it.
             print("Train Neural Forward Kinematics (FK) from Scratch")

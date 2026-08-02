@@ -40,7 +40,7 @@ def get_config(name_or_path):
     if path.is_file():
         return load_json(path)
 
-    config_root = Path(get_package_root())  / "geort" / "config"
+    config_root = Path(get_package_root()) / "config"
     path = config_root / f"{name_or_path}.json"
     if path.is_file():
         return load_json(path)

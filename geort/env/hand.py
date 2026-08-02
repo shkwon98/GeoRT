@@ -14,6 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from geort.utils.config_utils import get_config, save_json
 from geort.utils.hand_utils import check_contact, get_entity_by_name, get_active_joints, get_active_joint_indices
+from geort.utils.path import resolve_resource_path
 from datetime import datetime
 from tqdm import tqdm 
 import os
@@ -170,12 +171,12 @@ class HandKinematicModel:
             Build a kinematic model from user config.
         '''
         render = kwargs.get("render", False)
-        urdf_path = config["urdf_path"]
+        urdf_path = resolve_resource_path(config["urdf_path"])
         n_hand_dof = len(config["joint_order"])
         base_link = config["base_link"]
         joint_order = config["joint_order"]
 
-        model = HandKinematicModel(hand_urdf=urdf_path, render=render, n_hand_dof=n_hand_dof,base_link=base_link, joint_names=joint_order)
+        model = HandKinematicModel(hand_urdf=str(urdf_path), render=render, n_hand_dof=n_hand_dof,base_link=base_link, joint_names=joint_order)
         return model 
 
     def get_viewer_env(self):

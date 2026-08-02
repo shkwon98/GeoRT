@@ -4,9 +4,9 @@
 allegro_hand_config = {
     "name": "allegro_right",   # Todo: name your robot hand.
 
-    # URDF path. 
-    # Todo: Put your urdf under the assets folder, and fill in this line.
-    "urdf_path": "./assets/allegro_right/allegro_hand_right.urdf",
+    # URDF path. Keep custom assets outside the installed package and use an
+    # absolute path (or a path relative to the command's working directory).
+    "urdf_path": "/absolute/path/to/allegro_hand_right.urdf",
 
     # The name of baselink in urdf.
     # In GeoRT, we represent keypoint position in the base_link frame.

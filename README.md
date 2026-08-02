@@ -6,28 +6,27 @@ Welcome! This repository contains the code for the paper "Geometric Retargeting:
 
 ![Demo GIF](./images/demo.gif)
 ## Installation
-Install the lightweight core runtime first:
+Install [uv](https://docs.astral.sh/uv/) first, then create the lightweight core runtime:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install .
+uv sync --no-dev
 ```
 
-Core/inference supports Python 3.8+. Simulator training (`.[training]`, SAPIEN 2.x) requires Linux x86_64 with CPython 3.8–3.11; on Python 3.12+ use core/inference only unless you supply compatible simulator dependencies.
+`uv.lock` is the reproducible dependency record. Use `uv sync` (without `--no-dev`) to include the test environment.
+
+Core/inference supports Python 3.8+. Simulator training (the `training` extra, SAPIEN 2.x) requires Linux x86_64 with CPython 3.8–3.11; on Python 3.12+ use core/inference only unless you supply compatible simulator dependencies.
 
 ```bash
-python -m pip install ".[training]"  # SAPIEN, Open3D, tqdm
+uv sync --extra training --python 3.11  # SAPIEN, Open3D, tqdm
 ```
 
 For the optional camera demo:
 
 ```bash
-python -m pip install ".[mediapipe]"
+uv sync --extra mediapipe
 ```
 
-`requirements.txt` contains the pinned full environment. Manus/ROS integration remains separate; install `pyzmq` in that environment if you use it.
+For Manus/ROS, install its local client dependency with `uv sync --group manus`; ROS itself remains system-provided.
 
 GeoRT keeps generated recordings and checkpoints outside an installed wheel. Set `GEORT_HOME` to choose their writable location:
 
@@ -40,7 +39,7 @@ Without `GEORT_HOME`, a source checkout uses its `data/` and `checkpoint/` direc
 Upon completion, you will be able to train GeoRT and deploy the checkpoint in a clean and straightforward way. 
 ### Training (1-2min):
 ```bash
-python -m geort.trainer --hand allegro_right --human-data human_alex \
+uv run python -m geort.trainer --hand allegro_right --human-data human_alex \
   --tag geort_1 --device cpu --epoch 50
 ```
 
@@ -98,11 +97,11 @@ We just need to complete a quick setup process outlined below:
 ```
 Now, you can run this command to visualize your hand.
 ```bash
-python -m geort.env.hand --hand /path/to/your_robot_name.json
+uv run python -m geort.env.hand --hand /path/to/your_robot_name.json
 ```
 such as 
 ```bash
-python -m geort.env.hand --hand allegro_right
+uv run python -m geort.env.hand --hand allegro_right
 ```
 <span style="color:red"> If there is any segmentation error, please simplify the collision meshes or just remove all the `<collision>` fields in your URDF. </span> See the [Notes and Troubleshooting](#notes-and-troubleshooting) section.
 
@@ -139,9 +138,9 @@ During the data collection process, try to 1. fully stretch each finger and expl
 We understand that most users likely have their own mocap systems. However, for demonstration purposes, we provide a simple mocap solution based on MediaPipe. Please note, this is intended only for demo use and not for deployment; we will explain this in more detail later.
 
 ```bash
-python -m geort.mocap.mediapipe_mocap --name human
+uv run python -m geort.mocap.mediapipe_mocap --name human
 ```
-Install ``.[mediapipe]`` first. The command generates a dataset named ``human``. Refer to the file for instructions. When you see the pop-up window, press ``s`` to start recording and ``q`` to finish.
+Run `uv sync --extra mediapipe` first. The command generates a dataset named ``human``. Refer to the file for instructions. When you see the pop-up window, press ``s`` to start recording and ``q`` to finish.
 
 **Note:** Please ensure that the hand frame orientation is consistent between your motion capture system and the hand URDF (but fortunately the origin does not require any alignment and you can just set it to palm center). In our provided mocap example, we support the **right** hand using the following convention:+Y axis: from the palm center to the thumb. +Z axis: from the palm center to the middle fingertip. +X axis: palm normal (pointing out of the palm). 
 
@@ -149,7 +148,7 @@ Install ``.[mediapipe]`` first. The command generates a dataset named ``human``.
 Assuming you saved ``your_robot_name.json`` somewhere writable as described in Step 1, and set ``data_output_name`` to ``human`` in Step 2, run the following command. ``TAG`` is appended to the generated experiment directory.
 
 ```bash
-python -m geort.trainer --hand /path/to/your_robot_name.json --human-data human \
+uv run python -m geort.trainer --hand /path/to/your_robot_name.json --human-data human \
   --tag TAG --device cuda --epoch 50
 ```
 
@@ -160,13 +159,13 @@ If this is the first time you’re training for a new hand, an additional 5 minu
 For demo purpose, ``human_alex`` is bundled with GeoRT. For adapting it to a right Allegro hand, just run
 
 ```bash
-python -m geort.trainer --hand allegro_right --human-data human_alex \
+uv run python -m geort.trainer --hand allegro_right --human-data human_alex \
   --tag geort_1 --device cpu --epoch 50
 ```
 This creates ``<checkpoint-root>/allegro_right_<timestamp>_geort_1/``. Resume the same experiment (with the same hand, data, seed, validation split, and loss settings) with:
 
 ```bash
-python -m geort.trainer --hand allegro_right --human-data human_alex \
+uv run python -m geort.trainer --hand allegro_right --human-data human_alex \
   --resume /absolute/path/to/allegro_right_<timestamp>_geort_1 \
   --device cpu --epoch 100
 ```
@@ -193,12 +192,12 @@ We provide some examples in ``geort/mocap/mediapipe_evaluation.py`` and ``geort/
 
 The simplest way for testing is to use the replay evaluation as below. This will show the retargeted trajectory in the viewer. 
 ```bash
-python -m geort.mocap.replay_evaluation -hand allegro_right \
+uv run python -m geort.mocap.replay_evaluation -hand allegro_right \
   -ckpt_tag /absolute/path/to/YOUR_EXPERIMENT -data YOUR_TRAINING_DATA
 ```
 For instance, if ``human`` is in the configured writable data directory
 ```bash
-python -m geort.mocap.replay_evaluation -hand allegro_right \
+uv run python -m geort.mocap.replay_evaluation -hand allegro_right \
   -ckpt_tag /absolute/path/to/YOUR_EXPERIMENT -data human
 ```
 ## Contributing

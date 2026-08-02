@@ -7,16 +7,13 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.8", "3.11"]
     env:
-      UV_PYTHON: ${{ matrix.python-version }}
+      UV_PYTHON: "3.11"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
       - uses: astral-sh/setup-uv@v8
         with:
           enable-cache: true

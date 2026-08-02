@@ -14,10 +14,10 @@ uv sync --no-dev
 
 `uv.lock` is the reproducible dependency record. Use `uv sync` (without `--no-dev`) to include the test environment.
 
-Core/inference supports Python 3.8+. Simulator training (the `training` extra, SAPIEN 2.x) requires Linux x86_64 with CPython 3.8–3.11; on Python 3.12+ use core/inference only unless you supply compatible simulator dependencies.
+GeoRT supports CPython 3.11. Simulator training (the `training` extra, SAPIEN 2.x) requires Linux x86_64.
 
 ```bash
-uv sync --extra training --python 3.11  # SAPIEN, Open3D, tqdm
+uv sync --extra training  # SAPIEN, Open3D, tqdm
 ```
 
 For the optional camera demo:

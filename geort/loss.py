@@ -6,6 +6,10 @@
 
 import torch 
 
+
+def collision_free_loss(collision_logits):
+    return torch.nn.functional.softplus(collision_logits).mean()
+
 def chamfer_distance(input_points, target_points):
     """
     Args:

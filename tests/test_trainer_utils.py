@@ -56,6 +56,33 @@ def test_restore_rng_state_replays_next_values():
     assert (random.random(), np.random.rand(), torch.rand(1).item()) == expected
 
 
+def test_restore_rng_state_moves_loaded_rng_tensors_to_cpu(monkeypatch):
+    from geort.trainer import restore_rng_state
+
+    class LoadedRngTensor:
+        def __init__(self, value):
+            self.value = value
+
+        def cpu(self):
+            return f"cpu:{self.value}"
+
+    restored = {}
+    monkeypatch.setattr(torch, "set_rng_state", lambda state: restored.setdefault("torch", state))
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "set_rng_state_all", lambda states: restored.setdefault("cuda", states))
+
+    restore_rng_state(
+        {
+            "python": random.getstate(),
+            "numpy": np.random.get_state(),
+            "torch": LoadedRngTensor("torch"),
+            "cuda": [LoadedRngTensor("cuda:0"), LoadedRngTensor("cuda:1")],
+        }
+    )
+
+    assert restored == {"torch": "cpu:torch", "cuda": ["cpu:cuda:0", "cpu:cuda:1"]}
+
+
 def test_training_state_round_trip_restores_model_optimizer_and_next_epoch(tmp_path):
     from geort.trainer import load_training_state, save_training_state
 
@@ -158,3 +185,171 @@ def test_training_cli_exposes_reproducibility_and_path_options():
     assert args.val_fraction == 0.25
     assert args.epoch == 12
     assert args.resume == "experiment"
+
+
+def test_resume_config_validation_accepts_match_and_names_mismatch():
+    from geort.trainer import validate_resume_config
+
+    current = {
+        "name": "hand",
+        "urdf_path": "hand.urdf",
+        "base_link": "base",
+        "joint_order": ["joint"],
+        "fingertip_link": [{"link": "tip", "joint": ["joint"], "human_hand_id": 1}],
+        "joint": {"lower": [0.0], "upper": [1.0]},
+    }
+    metadata = {
+        "human_data": "/data/human.npy",
+        "seed": 7,
+        "val_fraction": 0.2,
+        **PAPER_DEFAULTS_FOR_TEST,
+        "direction_sigma": 0.005,
+        "flatness_sigma": 0.002,
+    }
+    saved = {**current, "training": metadata}
+
+    validate_resume_config(current, saved, metadata)
+    mismatched = {**metadata, "seed": 8}
+    with pytest.raises(ValueError, match="seed"):
+        validate_resume_config(current, saved, mismatched)
+
+
+def test_resume_validation_happens_before_stream_construction(tmp_path, monkeypatch):
+    from geort.trainer import GeoRTTrainer
+
+    config = _trainer_test_config()
+    trainer = GeoRTTrainer.__new__(GeoRTTrainer)
+    trainer.config = config
+    trainer.device = torch.device("cpu")
+    trainer.checkpoint_dir = tmp_path
+    trainer.hand = _TrainerTestHand()
+    human_path = tmp_path / "human.npy"
+    np.save(human_path, np.zeros((2, 1, 3), dtype=np.float32))
+    resume_dir = tmp_path / "experiment"
+    resume_dir.mkdir()
+    saved = _saved_trainer_config(config, human_path, val_fraction=0.0)
+    saved["name"] = "different-hand"
+    (resume_dir / "config.json").write_text(json.dumps(saved))
+    monkeypatch.setattr(trainer, "_build_streams", lambda *args, **kwargs: pytest.fail("streams built"))
+
+    with pytest.raises(ValueError, match="name"):
+        trainer.train(human_path, epoch=1, val_fraction=0.0, resume=resume_dir)
+
+
+def test_resume_does_not_overwrite_existing_config(tmp_path, monkeypatch):
+    from geort.model import IKModel
+    from geort.trainer import GeoRTTrainer, save_training_state
+
+    config = _trainer_test_config()
+    trainer = GeoRTTrainer.__new__(GeoRTTrainer)
+    trainer.config = config
+    trainer.device = torch.device("cpu")
+    trainer.checkpoint_dir = tmp_path
+    trainer.hand = _TrainerTestHand()
+    human_path = tmp_path / "human.npy"
+    np.save(human_path, np.zeros((2, 1, 3), dtype=np.float32))
+    resume_dir = tmp_path / "experiment"
+    resume_dir.mkdir()
+    saved = _saved_trainer_config(config, human_path, val_fraction=0.0)
+    config_path = resume_dir / "config.json"
+    original_config_text = json.dumps(saved)
+    config_path.write_text(original_config_text)
+    model = IKModel([[0, 1]])
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    save_training_state(resume_dir / "training_state.pth", model, optimizer, epoch=0)
+
+    monkeypatch.setattr(trainer, "_build_streams", lambda *args, **kwargs: ([], []))
+    monkeypatch.setattr(trainer, "get_robot_neural_fk_model", lambda: None)
+    monkeypatch.setattr(trainer, "get_collision_classifier", lambda: None)
+    monkeypatch.setattr(trainer, "get_robot_pointcloud", lambda names: np.zeros((1, 2, 3)))
+
+    assert trainer.train(human_path, epoch=1, val_fraction=0.0, resume=resume_dir) == resume_dir
+    assert config_path.read_text() == original_config_text
+
+
+def test_resolve_human_data_supports_nested_filename_in_data_dir(tmp_path):
+    from geort.trainer import _resolve_human_data
+
+    path = tmp_path / "sub" / "sample.npy"
+    path.parent.mkdir()
+    np.save(path, np.zeros((1, 1, 3)))
+
+    assert _resolve_human_data("sub/sample.npy", tmp_path) == path
+
+
+def test_build_streams_routes_coverage_and_aligned_gestures(monkeypatch):
+    from geort.dataset import MultiPointDataset
+    from geort.trainer import GeoRTTrainer
+
+    frames = np.arange(4 * 2 * 3, dtype=np.float32).reshape(4, 2, 3)
+    captured = {}
+
+    def fake_from_points(points, n):
+        captured["points"] = points.copy()
+        return MultiPointDataset(points)
+
+    monkeypatch.setattr(MultiPointDataset, "from_points", staticmethod(fake_from_points))
+    coverage_loader, gesture_loader = GeoRTTrainer._build_streams(frames, shuffle=False)
+
+    np.testing.assert_array_equal(captured["points"], frames.transpose(1, 0, 2))
+    np.testing.assert_array_equal(coverage_loader.dataset.points, frames.transpose(1, 0, 2))
+    np.testing.assert_array_equal(gesture_loader.dataset.frames, frames)
+
+
+def test_frozen_fk_and_classifier_keep_input_gradients():
+    from geort.model import CollisionClassifier, FKModel
+    from geort.trainer import _freeze_model
+
+    fk = _freeze_model(FKModel([[0, 1]]))
+    classifier = _freeze_model(CollisionClassifier(2))
+    joint = torch.zeros(2, 2, requires_grad=True)
+    (fk(joint).sum() + classifier(joint).sum()).backward()
+
+    assert joint.grad is not None
+    assert all(parameter.grad is None and not parameter.requires_grad for parameter in fk.parameters())
+    assert all(parameter.grad is None and not parameter.requires_grad for parameter in classifier.parameters())
+
+
+PAPER_DEFAULTS_FOR_TEST = {
+    "w_chamfer": 80.0,
+    "w_curvature": 1.0,
+    "w_pinch": 1000.0,
+    "w_collision": 1e-4,
+}
+
+
+def _trainer_test_config():
+    return {
+        "name": "hand",
+        "urdf_path": "hand.urdf",
+        "base_link": "base",
+        "joint_order": ["joint0", "joint1"],
+        "fingertip_link": [
+            {
+                "link": "tip",
+                "joint": ["joint0", "joint1"],
+                "center_offset": [0.0, 0.0, 0.0],
+                "human_hand_id": 0,
+            }
+        ],
+    }
+
+
+class _TrainerTestHand:
+    def get_joint_limit(self):
+        return np.array([0.0, 0.0]), np.array([1.0, 1.0])
+
+
+def _saved_trainer_config(config, human_path, val_fraction):
+    return {
+        **config,
+        "joint": {"lower": [0.0, 0.0], "upper": [1.0, 1.0]},
+        "training": {
+            "human_data": str(human_path.resolve()),
+            "seed": 0,
+            "val_fraction": val_fraction,
+            **PAPER_DEFAULTS_FOR_TEST,
+            "direction_sigma": 0.005,
+            "flatness_sigma": 0.002,
+        },
+    }

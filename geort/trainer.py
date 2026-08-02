@@ -22,7 +22,7 @@ from geort.dataset import CollisionDataset, GestureDataset, MultiPointDataset, R
 from geort.formatter import HandFormatter
 from geort.loss import chamfer_distance, collision_free_loss, pinch_correspondence_loss
 from geort.model import CollisionClassifier, FKModel, IKModel
-from geort.utils.config_utils import get_config, save_json
+from geort.utils.config_utils import get_config, load_json, save_json
 from geort.utils.path import get_checkpoint_root, get_data_root, get_human_data
 from tqdm import tqdm
 
@@ -33,6 +33,25 @@ PAPER_DEFAULTS = {
     "w_pinch": 1000.0,
     "w_collision": 1e-4,
 }
+
+RESUME_HAND_KEYS = ("name", "urdf_path", "base_link", "joint_order", "fingertip_link", "joint")
+
+
+def validate_resume_config(current_config, saved_config, expected_training):
+    for key in RESUME_HAND_KEYS:
+        if saved_config.get(key) != current_config.get(key):
+            raise ValueError(f"Resume configuration mismatch for '{key}'")
+    saved_training = saved_config.get("training", {})
+    for key, value in expected_training.items():
+        if saved_training.get(key) != value:
+            raise ValueError(f"Resume configuration mismatch for '{key}'")
+
+
+def _freeze_model(model):
+    model.eval()
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
+    return model
 
 
 def split_aligned_frames(frames, val_fraction, seed):
@@ -75,9 +94,9 @@ def capture_rng_state():
 def restore_rng_state(state):
     random.setstate(state["python"])
     np.random.set_state(state["numpy"])
-    torch.set_rng_state(state["torch"])
+    torch.set_rng_state(state["torch"].cpu())
     if state["cuda"] is not None and torch.cuda.is_available():
-        torch.cuda.set_rng_state_all(state["cuda"])
+        torch.cuda.set_rng_state_all([rng.cpu() for rng in state["cuda"]])
 
 
 def _json_default(value):
@@ -289,10 +308,7 @@ class GeoRTTrainer:
             
             torch.save(fk_model.state_dict(), fk_checkpoint_path)
         
-        fk_model.eval()
-        for parameter in fk_model.parameters():
-            parameter.requires_grad_(False)
-        return fk_model
+        return _freeze_model(fk_model)
 
     def get_collision_dataset_path(self):
         return self.data_dir / f"{self.config['name']}_collision.npz"
@@ -342,10 +358,7 @@ class GeoRTTrainer:
                     optimizer.step()
             torch.save(model.state_dict(), path)
 
-        model.eval()
-        for parameter in model.parameters():
-            parameter.requires_grad_(False)
-        return model
+        return _freeze_model(model)
 
     @staticmethod
     def _build_streams(frames, shuffle):
@@ -467,8 +480,41 @@ class GeoRTTrainer:
         flatness_sigma=0.002,
         **loss_weights,
     ):
-        set_seed(seed)
         weights = {name: loss_weights.get(name, default) for name, default in PAPER_DEFAULTS.items()}
+        human_data_path = Path(human_data_path).resolve()
+        lower, upper = self.hand.get_joint_limit()
+        export_config = self.config.copy()
+        export_config["joint"] = {"lower": get_float_list_from_np(lower), "upper": get_float_list_from_np(upper)}
+        training_metadata = {
+            "human_data": str(human_data_path),
+            "seed": seed,
+            "val_fraction": val_fraction,
+            **weights,
+            "direction_sigma": direction_sigma,
+            "flatness_sigma": flatness_sigma,
+        }
+        export_config["training"] = training_metadata
+
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        if resume is not None:
+            resume_path = Path(resume)
+            save_dir = resume_path if resume_path.is_dir() else self.checkpoint_dir / resume_path
+            if not save_dir.is_dir():
+                raise FileNotFoundError(f"Resume experiment directory not found: {save_dir}")
+            config_path = save_dir / "config.json"
+            state_path = save_dir / "training_state.pth"
+            if not config_path.is_file():
+                raise FileNotFoundError(f"Resume configuration not found: {config_path}")
+            validate_resume_config(export_config, load_json(config_path), training_metadata)
+            if not state_path.is_file():
+                raise FileNotFoundError(f"Training state not found: {state_path}")
+        else:
+            suffix = f"_{tag}" if tag else ""
+            save_dir = self.checkpoint_dir / f"{self.config['name']}_{generate_current_timestring()}{suffix}"
+            save_dir.mkdir(parents=True)
+            save_json(export_config, save_dir / "config.json")
+
+        set_seed(seed)
         human_raw = np.load(human_data_path)
         human_ids = self.get_keypoint_info()["human_id"]
         if human_raw.ndim != 3 or human_raw.shape[-1] < 3 or max(human_ids) >= human_raw.shape[1]:
@@ -486,33 +532,10 @@ class GeoRTTrainer:
             self.get_robot_pointcloud(self.get_keypoint_info()["link"]), dtype=torch.float32, device=self.device
         )
 
-        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         if resume is not None:
-            resume_path = Path(resume)
-            save_dir = resume_path if resume_path.is_dir() else self.checkpoint_dir / resume_path
-            if not save_dir.is_dir():
-                raise FileNotFoundError(f"Resume experiment directory not found: {save_dir}")
-            state_path = save_dir / "training_state.pth"
-            if not state_path.is_file():
-                raise FileNotFoundError(f"Training state not found: {state_path}")
             start_epoch = load_training_state(state_path, ik_model, optimizer, self.device)
         else:
-            suffix = f"_{tag}" if tag else ""
-            save_dir = self.checkpoint_dir / f"{self.config['name']}_{generate_current_timestring()}{suffix}"
-            save_dir.mkdir(parents=True)
             start_epoch = 0
-
-        lower, upper = self.hand.get_joint_limit()
-        export_config = self.config.copy()
-        export_config["joint"] = {"lower": get_float_list_from_np(lower), "upper": get_float_list_from_np(upper)}
-        export_config["training"] = {
-            "seed": seed,
-            "val_fraction": val_fraction,
-            **weights,
-            "direction_sigma": direction_sigma,
-            "flatness_sigma": flatness_sigma,
-        }
-        save_json(export_config, save_dir / "config.json")
 
         for current_epoch in range(start_epoch, epoch):
             train_metrics = self._run_epoch(
@@ -577,7 +600,9 @@ def _resolve_human_data(name_or_path, data_dir=None):
     if path.is_file():
         return path
     if data_dir is not None:
-        path = Path(data_dir) / f"{name_or_path}.npy"
+        path = Path(data_dir) / path
+        if not path.suffix:
+            path = path.with_suffix(".npy")
         if path.is_file():
             return path
         raise FileNotFoundError(f"Human data file not found: {path}")

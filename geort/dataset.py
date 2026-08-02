@@ -3,17 +3,18 @@
 
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-import random
 import numpy as np
-import open3d as o3d
+from torch.utils.data import Dataset
 
 def upsample_array(x, K=50000):
     n = x.shape[0]
-    ind = np.random.randint(0, n - 1, K)
+    if n == 0:
+        raise ValueError("Cannot upsample an empty array")
+    ind = np.random.randint(0, n, K)
     return x[ind]
 
 
-class MultiPointDataset:
+class MultiPointDataset(Dataset):
     def __init__(self, points):
         self.points = np.array(points) # [Num_Fingers, Num_Samples, 3]
 
@@ -22,6 +23,8 @@ class MultiPointDataset:
         '''
             This is the actual initialization function. 
         '''
+        import open3d as o3d
+
         num_fingers = points.shape[0]
         all_points = []
 
@@ -40,6 +43,19 @@ class MultiPointDataset:
 
     def __getitem__(self, idx):
         return self.points[:, idx]
+
+
+class GestureDataset(Dataset):
+    def __init__(self, frames):
+        self.frames = np.array(frames)
+        if self.frames.ndim != 3 or self.frames.shape[-1] != 3:
+            raise ValueError("Expected aligned gesture frames with shape [T, F, 3]")
+
+    def __len__(self):
+        return self.frames.shape[0]
+
+    def __getitem__(self, idx):
+        return self.frames[idx]
 
 class RobotKinematicsDataset:
     def __init__(self, qpos_keypoint_file, keypoint_names):

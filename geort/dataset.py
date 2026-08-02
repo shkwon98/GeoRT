@@ -57,6 +57,21 @@ class GestureDataset(Dataset):
     def __getitem__(self, idx):
         return self.frames[idx]
 
+
+class CollisionDataset(Dataset):
+    def __init__(self, path):
+        data = np.load(path)
+        self.qpos = data["qpos"].astype(np.float32)
+        self.collision = data["collision"].astype(np.float32)
+        if len(self.qpos) != len(self.collision):
+            raise ValueError("qpos and collision must contain the same number of samples")
+
+    def __len__(self):
+        return len(self.qpos)
+
+    def __getitem__(self, idx):
+        return {"qpos": self.qpos[idx], "collision": self.collision[idx]}
+
 class RobotKinematicsDataset:
     def __init__(self, qpos_keypoint_file, keypoint_names):
         np_array = np.load(qpos_keypoint_file,  allow_pickle=True)

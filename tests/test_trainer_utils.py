@@ -4,6 +4,7 @@ import random
 import sys
 
 import numpy as np
+import pytest
 import torch
 
 
@@ -89,3 +90,71 @@ def test_append_metrics_writes_jsonl_with_scalar_tensors(tmp_path):
     assert [json.loads(line) for line in path.read_text().splitlines()] == [
         {"epoch": 2, "loss": 1.25, "lr": 0.01}
     ]
+
+
+def test_split_aligned_frames_is_deterministic_and_keeps_whole_frames():
+    from geort.trainer import split_aligned_frames
+
+    frames = np.arange(10 * 3 * 3, dtype=np.float32).reshape(10, 3, 3)
+    train, validation = split_aligned_frames(frames, val_fraction=0.3, seed=19)
+    repeated_train, repeated_validation = split_aligned_frames(frames, val_fraction=0.3, seed=19)
+
+    np.testing.assert_array_equal(train, repeated_train)
+    np.testing.assert_array_equal(validation, repeated_validation)
+    assert len(train) == 7
+    assert len(validation) == 3
+    original_frames = {frame.tobytes() for frame in frames}
+    train_frames = {frame.tobytes() for frame in train}
+    validation_frames = {frame.tobytes() for frame in validation}
+    assert train_frames | validation_frames == original_frames
+    assert train_frames.isdisjoint(validation_frames)
+
+
+@pytest.mark.parametrize("fraction", [-0.1, 1.0])
+def test_split_aligned_frames_rejects_invalid_validation_fraction(fraction):
+    from geort.trainer import split_aligned_frames
+
+    with pytest.raises(ValueError, match="val_fraction"):
+        split_aligned_frames(np.zeros((3, 2, 3)), fraction, seed=0)
+
+
+def test_split_aligned_frames_requires_two_frames_for_validation():
+    from geort.trainer import split_aligned_frames
+
+    with pytest.raises(ValueError, match="two frames"):
+        split_aligned_frames(np.zeros((1, 2, 3)), 0.5, seed=0)
+
+
+def test_paper_training_defaults_match_recommended_weights():
+    from geort.trainer import PAPER_DEFAULTS
+
+    assert PAPER_DEFAULTS == {
+        "w_chamfer": 80.0,
+        "w_curvature": 1.0,
+        "w_pinch": 1000.0,
+        "w_collision": 1e-4,
+    }
+
+
+def test_training_cli_exposes_reproducibility_and_path_options():
+    from geort.trainer import build_arg_parser
+
+    args = build_arg_parser().parse_args(
+        [
+            "--device", "cpu",
+            "--data-dir", "/tmp/data",
+            "--checkpoint-dir", "/tmp/checkpoints",
+            "--seed", "7",
+            "--val-fraction", "0.25",
+            "--epoch", "12",
+            "--resume", "experiment",
+        ]
+    )
+
+    assert args.device == "cpu"
+    assert args.data_dir == "/tmp/data"
+    assert args.checkpoint_dir == "/tmp/checkpoints"
+    assert args.seed == 7
+    assert args.val_fraction == 0.25
+    assert args.epoch == 12
+    assert args.resume == "experiment"

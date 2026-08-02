@@ -13,7 +13,7 @@ import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
 from geort.utils.config_utils import get_config, save_json
-from geort.utils.hand_utils import get_entity_by_name, get_active_joints, get_active_joint_indices
+from geort.utils.hand_utils import check_contact, get_entity_by_name, get_active_joints, get_active_joint_indices
 from datetime import datetime
 from tqdm import tqdm 
 import os
@@ -149,6 +149,20 @@ class HandKinematicModel:
         if ret_vec:
             return np.array(vec_result)
         return result
+
+    def is_self_collision(self, qpos):
+        qpos = np.asarray(qpos)
+        if qpos.shape != (self.get_n_dof(),):
+            raise ValueError(f"Expected qpos with shape ({self.get_n_dof()},), got {qpos.shape}")
+        if not np.isfinite(qpos).all():
+            raise ValueError("qpos must contain only finite values")
+
+        qpos = self.convert_user_order_to_sim_order(qpos)
+        self.hand.set_qpos(qpos)
+        self.hand.set_qvel(np.zeros_like(qpos))
+        self.scene.step()
+        links = self.hand.get_links()
+        return check_contact(self.scene, links, links)
 
     @staticmethod
     def build_from_config(config, **kwargs):

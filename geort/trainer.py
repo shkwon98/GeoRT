@@ -5,25 +5,52 @@
 # LICENSE file in the root directory of this source tree.
 
 import json
+import math
 import random
+from contextlib import nullcontext
+from datetime import datetime
+from pathlib import Path
+
 import numpy as np
 import torch
-import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.optim as optim
 from torch.utils.data import DataLoader
-from geort.utils.hand_utils import get_entity_by_name, get_active_joints, get_active_joint_indices
-from geort.utils.path import get_human_data 
-from geort.utils.config_utils import get_config, save_json
-from geort.model import FKModel, IKModel 
-from geort.loss import chamfer_distance
+
+from geort.dataset import CollisionDataset, GestureDataset, MultiPointDataset, RobotKinematicsDataset
 from geort.formatter import HandFormatter
-from geort.dataset import RobotKinematicsDataset, MultiPointDataset
-from datetime import datetime
-from tqdm import tqdm 
-import os
-from pathlib import Path 
-import math
+from geort.loss import chamfer_distance, collision_free_loss, pinch_correspondence_loss
+from geort.model import CollisionClassifier, FKModel, IKModel
+from geort.utils.config_utils import get_config, save_json
+from geort.utils.path import get_checkpoint_root, get_data_root, get_human_data
+from tqdm import tqdm
+
+
+PAPER_DEFAULTS = {
+    "w_chamfer": 80.0,
+    "w_curvature": 1.0,
+    "w_pinch": 1000.0,
+    "w_collision": 1e-4,
+}
+
+
+def split_aligned_frames(frames, val_fraction, seed):
+    frames = np.asarray(frames)
+    if frames.ndim != 3 or frames.shape[-1] != 3:
+        raise ValueError("Expected aligned frames with shape [T, F, 3]")
+    if not 0 <= val_fraction < 1:
+        raise ValueError("val_fraction must satisfy 0 <= val_fraction < 1")
+    if not val_fraction:
+        return frames, frames[:0]
+    if len(frames) < 2:
+        raise ValueError("Validation requires at least two frames")
+
+    validation_count = min(len(frames) - 1, max(1, round(len(frames) * val_fraction)))
+    validation_indices = np.sort(np.random.default_rng(seed).permutation(len(frames))[:validation_count])
+    train_mask = np.ones(len(frames), dtype=bool)
+    train_mask[validation_indices] = False
+    return frames[train_mask], frames[validation_indices]
 
 
 def set_seed(seed):
@@ -112,10 +139,13 @@ def generate_current_timestring():
     return datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
 class GeoRTTrainer:
-    def __init__(self, config):
+    def __init__(self, config, device=None, data_dir=None, checkpoint_dir=None):
         from geort.env.hand import HandKinematicModel
 
         self.config = config
+        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.data_dir = Path(data_dir) if data_dir is not None else Path(get_data_root())
+        self.checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir is not None else Path(get_checkpoint_root())
         self.hand = HandKinematicModel.build_from_config(self.config)
 
     def get_robot_pointcloud(self, keypoint_names):
@@ -130,9 +160,8 @@ class GeoRTTrainer:
             Utility getter function. Return the robot kinematics dataset
         '''
         dataset_path = self.get_robot_kinematics_dataset_path(postfix=True)
-        if not os.path.exists(dataset_path):
-            dataset = self.generate_robot_kinematics_dataset(n_total=100000, save=True)
-            dataset_path = self.get_robot_kinematics_dataset_path(postfix=True)
+        if not dataset_path.exists():
+            self.generate_robot_kinematics_dataset(n_total=100000, save=True)
         
         keypoint_names = self.get_keypoint_info()["link"]
 
@@ -145,10 +174,7 @@ class GeoRTTrainer:
         '''
         data_name = self.config["name"]
         
-        out = f"data/{data_name}"
-        if postfix:
-            out += '.npz'
-        return out 
+        return self.data_dir / (f"{data_name}.npz" if postfix else data_name)
 
     def get_keypoint_info(self):
         keypoint_links = []
@@ -188,7 +214,6 @@ class GeoRTTrainer:
         
         self.hand.initialize_keypoint(keypoint_link_names=info["link"], keypoint_offsets=info["offset"])
 
-        data = []
         joint_range_low, joint_range_high = self.hand.get_joint_limit() # joint order is based on user config specification.
         joint_range_low = np.array(joint_range_low)
         joint_range_high = np.array(joint_range_high)
@@ -204,19 +229,18 @@ class GeoRTTrainer:
             
         all_data_keypoint = merge_dict_list(all_data_keypoint)    
         
-        dataset = {"qpos": all_data_qpos, "keypoint": all_data_keypoint}
+        dataset = {"qpos": np.asarray(all_data_qpos, dtype=np.float32), "keypoint": all_data_keypoint}
 
         if save:
-            # save data to disk for future use.
-            os.makedirs("data", exist_ok=True)
+            self.data_dir.mkdir(parents=True, exist_ok=True)
             np.savez(self.get_robot_kinematics_dataset_path(), **dataset)
 
         return dataset
 
     def get_fk_checkpoint_path(self):
         name = self.config["name"]
-        os.makedirs("checkpoint", exist_ok=True)
-        return f"checkpoint/fk_model_{name}.pth"
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        return self.checkpoint_dir / f"fk_model_{name}.pth"
     
     def get_robot_neural_fk_model(self, force_train=False):
         '''
@@ -230,12 +254,12 @@ class GeoRTTrainer:
         
         # Model.
         print(self.get_keypoint_info()["joint"])
-        fk_model = FKModel(keypoint_joints=self.get_keypoint_info()["joint"]).cuda()
+        fk_model = FKModel(keypoint_joints=self.get_keypoint_info()["joint"]).to(self.device)
         
         # If the model exists, load it.
         fk_checkpoint_path = self.get_fk_checkpoint_path()
-        if os.path.exists(fk_checkpoint_path) and not force_train:
-            fk_model.load_state_dict(torch.load(fk_checkpoint_path))
+        if fk_checkpoint_path.exists() and not force_train:
+            fk_model.load_state_dict(torch.load(fk_checkpoint_path, map_location=self.device, weights_only=True))
 
         else:
             # If the model does not exist, train it.
@@ -246,11 +270,11 @@ class GeoRTTrainer:
             fk_optim = optim.Adam(fk_model.parameters(), lr=5e-4)
 
             criterion_fk = nn.MSELoss()
-            for epoch in range(200):
+            for epoch in range(50):
                 all_fk_error = 0
                 for batch_idx, batch in enumerate(fk_dataloader):
-                    keypoint = batch["keypoint"].cuda().float()
-                    qpos = batch["qpos"].cuda().float() 
+                    keypoint = batch["keypoint"].to(self.device).float()
+                    qpos = batch["qpos"].to(self.device).float()
                     qpos = qpos_normalizer.normalize_torch(qpos)
                     predicted_keypoint = fk_model(qpos)
                     fk_optim.zero_grad()
@@ -266,187 +290,324 @@ class GeoRTTrainer:
             torch.save(fk_model.state_dict(), fk_checkpoint_path)
         
         fk_model.eval()
+        for parameter in fk_model.parameters():
+            parameter.requires_grad_(False)
         return fk_model
-        
-    def train(self, human_data_path, **kwargs):
-        '''
-            This is the main trainer.
-        '''
 
-        fk_model = self.get_robot_neural_fk_model()
-        ik_model = IKModel(keypoint_joints=self.get_keypoint_info()["joint"]).cuda()
-        os.makedirs("./checkpoint", exist_ok=True)
+    def get_collision_dataset_path(self):
+        return self.data_dir / f"{self.config['name']}_collision.npz"
 
-        ik_optim = optim.AdamW(ik_model.parameters(), lr=1e-4)
+    def generate_collision_dataset(self, save=True):
+        qpos = self.get_robot_kinematics_dataset().qpos.astype(np.float32)
+        collision = np.asarray([self.hand.is_self_collision(q) for q in tqdm(qpos)], dtype=np.float32)
+        dataset = {"qpos": qpos, "collision": collision}
+        if save:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            np.savez(self.get_collision_dataset_path(), **dataset)
+        return dataset
 
-        # Workspace.
-        exp_tag = kwargs.get("tag", "")
-        n_epoch = kwargs.get("epoch", 200)
-        hand_model_name = self.config["name"]
+    def get_collision_dataset(self):
+        path = self.get_collision_dataset_path()
+        if not path.exists():
+            self.generate_collision_dataset(save=True)
+        return CollisionDataset(path)
 
-        w_chamfer = kwargs.get("w_chamfer", 80.0)
-        w_curvature = kwargs.get("w_curvature", 0.1)
-        w_collision = kwargs.get("w_collision", 0.0)
-        w_pinch = kwargs.get("w_pinch", 1.0)
+    def get_collision_classifier(self, force_train=False):
+        lower, upper = self.hand.get_joint_limit()
+        normalizer = HandFormatter(lower, upper)
+        model = CollisionClassifier(len(lower)).to(self.device)
+        path = self.checkpoint_dir / f"collision_model_{self.config['name']}.pth"
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+        if path.exists() and not force_train:
+            model.load_state_dict(torch.load(path, map_location=self.device, weights_only=True))
+        else:
+            dataset = self.get_collision_dataset()
+            if len(dataset) < 2:
+                raise ValueError("Collision classifier training requires at least two samples")
+            batch_size = min(256, len(dataset))
+            while len(dataset) % batch_size == 1 and batch_size > 2:
+                batch_size -= 1
+            loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+            optimizer = optim.Adam(model.parameters(), lr=5e-4)
+            criterion = nn.BCEWithLogitsLoss()
+            model.train()
+            for _ in range(50):
+                for batch in loader:
+                    qpos = normalizer.normalize_torch(batch["qpos"].to(self.device).float())
+                    labels = batch["collision"].to(self.device).float()
+                    loss = criterion(model(qpos), labels)
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+            torch.save(model.state_dict(), path)
 
+        model.eval()
+        for parameter in model.parameters():
+            parameter.requires_grad_(False)
+        return model
 
-        save_dir = f"./checkpoint/{hand_model_name}_{generate_current_timestring()}"
-        if exp_tag != '':
-            save_dir += f'_{exp_tag}'
-        last_save_dir = f"./checkpoint/{hand_model_name}_last"
+    @staticmethod
+    def _build_streams(frames, shuffle):
+        coverage = MultiPointDataset.from_points(frames.transpose(1, 0, 2), n=20000)
+        gestures = GestureDataset(frames)
+        return (
+            DataLoader(coverage, batch_size=2048, shuffle=shuffle),
+            DataLoader(gestures, batch_size=min(2048, len(gestures)), shuffle=shuffle),
+        )
 
-        os.makedirs(save_dir, exist_ok=True)
-        os.makedirs(last_save_dir, exist_ok=True)
+    def _compute_losses(
+        self,
+        coverage_points,
+        gesture_frames,
+        robot_points,
+        ik_model,
+        fk_model,
+        collision_classifier,
+        weights,
+        direction_sigma,
+        flatness_sigma,
+    ):
+        coverage_points = coverage_points.to(self.device).float()
+        gesture_frames = gesture_frames.to(self.device).float()
 
-        # Save the config including robot joint info to the checkpoint directory.
-        joint_lower_limit, joint_upper_limit = self.hand.get_joint_limit()
+        coverage_embedded = fk_model(ik_model(coverage_points))
+        gesture_joints = ik_model(gesture_frames)
+        gesture_embedded = fk_model(gesture_joints)
 
-        export_config = self.config.copy()
-        export_config["joint"] = {
-            "lower": get_float_list_from_np(joint_lower_limit),
-            "upper": get_float_list_from_np(joint_upper_limit)
+        flatness_delta = torch.randn_like(gesture_frames) * flatness_sigma
+        embedded_positive = fk_model(ik_model(gesture_frames + flatness_delta))
+        embedded_negative = fk_model(ik_model(gesture_frames - flatness_delta))
+        curvature = ((embedded_positive + embedded_negative - 2 * gesture_embedded) ** 2).mean()
+
+        selected = torch.randint(robot_points.shape[1], (coverage_points.size(0),), device=self.device)
+        target = robot_points[:, selected].permute(1, 0, 2)
+        chamfer = sum(
+            chamfer_distance(coverage_embedded[:, i].unsqueeze(0), target[:, i].unsqueeze(0))
+            for i in range(coverage_points.size(1))
+        )
+
+        direction_delta = torch.randn_like(gesture_frames) * direction_sigma
+        embedded_delta = fk_model(ik_model(gesture_frames + direction_delta))
+        d1 = direction_delta.reshape(-1, 3)
+        d2 = (embedded_delta - gesture_embedded).reshape(-1, 3)
+        direction = -(F.normalize(d1, dim=-1, eps=1e-5) * F.normalize(d2, dim=-1, eps=1e-5)).sum(-1).mean()
+        pinch = pinch_correspondence_loss(gesture_frames, gesture_embedded)
+        collision = collision_free_loss(collision_classifier(gesture_joints))
+        total = (
+            direction
+            + weights["w_chamfer"] * chamfer
+            + weights["w_curvature"] * curvature
+            + weights["w_pinch"] * pinch
+            + weights["w_collision"] * collision
+        )
+        return {
+            "total": total,
+            "direction": direction,
+            "chamfer": chamfer,
+            "curvature": curvature,
+            "pinch": pinch,
+            "collision": collision,
         }
 
-        save_json(export_config, Path(save_dir) / "config.json")
-        save_json(export_config, Path(last_save_dir) / "config.json")
+    def _run_epoch(
+        self,
+        coverage_loader,
+        gesture_loader,
+        robot_points,
+        ik_model,
+        fk_model,
+        collision_classifier,
+        weights,
+        direction_sigma,
+        flatness_sigma,
+        optimizer=None,
+    ):
+        training = optimizer is not None
+        ik_model.train(training)
+        totals = {name: 0.0 for name in ("total", "direction", "chamfer", "curvature", "pinch", "collision")}
+        gesture_iterator = iter(gesture_loader)
 
-        # Dataset.
-        robot_keypoint_names = self.get_keypoint_info()['link']
-        n_keypoints = len(robot_keypoint_names)
+        with nullcontext() if training else torch.no_grad():
+            for coverage_points in coverage_loader:
+                try:
+                    gesture_frames = next(gesture_iterator)
+                except StopIteration:
+                    gesture_iterator = iter(gesture_loader)
+                    gesture_frames = next(gesture_iterator)
+                losses = self._compute_losses(
+                    coverage_points,
+                    gesture_frames,
+                    robot_points,
+                    ik_model,
+                    fk_model,
+                    collision_classifier,
+                    weights,
+                    direction_sigma,
+                    flatness_sigma,
+                )
+                if training:
+                    optimizer.zero_grad()
+                    losses["total"].backward()
+                    optimizer.step()
+                for name, value in losses.items():
+                    totals[name] += value.item()
 
-        robot_points = self.get_robot_pointcloud(robot_keypoint_names)
+        return {name: value / len(coverage_loader) for name, value in totals.items()}
 
-        human_finger_idxes = self.get_keypoint_info()["human_id"]
-        for robot_keypoint_name, human_id in zip(robot_keypoint_names, human_finger_idxes):
-            print(f"Robot Keypoint {robot_keypoint_name}: Human Id: {human_id}")
+    def train(
+        self,
+        human_data_path,
+        tag="",
+        epoch=50,
+        seed=0,
+        val_fraction=0.1,
+        resume=None,
+        direction_sigma=0.005,
+        flatness_sigma=0.002,
+        **loss_weights,
+    ):
+        set_seed(seed)
+        weights = {name: loss_weights.get(name, default) for name, default in PAPER_DEFAULTS.items()}
+        human_raw = np.load(human_data_path)
+        human_ids = self.get_keypoint_info()["human_id"]
+        if human_raw.ndim != 3 or human_raw.shape[-1] < 3 or max(human_ids) >= human_raw.shape[1]:
+            raise ValueError("Human recordings must have shape [T, landmarks, >=3] and contain configured human ids")
+        human_frames = human_raw[:, human_ids, :3].astype(np.float32)
+        train_frames, validation_frames = split_aligned_frames(human_frames, val_fraction, seed)
+        train_coverage, train_gestures = self._build_streams(train_frames, shuffle=True)
+        validation_streams = self._build_streams(validation_frames, shuffle=False) if len(validation_frames) else None
 
-        human_points = np.load(human_data_path)
-        human_points = np.array([human_points[:, idx, :3] for idx in human_finger_idxes]) # [N_finger, N, 3]
+        fk_model = self.get_robot_neural_fk_model()
+        collision_classifier = self.get_collision_classifier()
+        ik_model = IKModel(keypoint_joints=self.get_keypoint_info()["joint"]).to(self.device)
+        optimizer = optim.AdamW(ik_model.parameters(), lr=1e-4)
+        robot_points = torch.as_tensor(
+            self.get_robot_pointcloud(self.get_keypoint_info()["link"]), dtype=torch.float32, device=self.device
+        )
 
-        point_dataset_human = MultiPointDataset.from_points(human_points, n=20000)
-        point_dataloader = DataLoader(point_dataset_human, batch_size=2048, shuffle=True)
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        if resume is not None:
+            resume_path = Path(resume)
+            save_dir = resume_path if resume_path.is_dir() else self.checkpoint_dir / resume_path
+            if not save_dir.is_dir():
+                raise FileNotFoundError(f"Resume experiment directory not found: {save_dir}")
+            state_path = save_dir / "training_state.pth"
+            if not state_path.is_file():
+                raise FileNotFoundError(f"Training state not found: {state_path}")
+            start_epoch = load_training_state(state_path, ik_model, optimizer, self.device)
+        else:
+            suffix = f"_{tag}" if tag else ""
+            save_dir = self.checkpoint_dir / f"{self.config['name']}_{generate_current_timestring()}{suffix}"
+            save_dir.mkdir(parents=True)
+            start_epoch = 0
 
-        # Training / Optimization
-        for epoch in range(n_epoch):
-            for batch_idx, batch in enumerate(point_dataloader):
-                direction_loss = 0
+        lower, upper = self.hand.get_joint_limit()
+        export_config = self.config.copy()
+        export_config["joint"] = {"lower": get_float_list_from_np(lower), "upper": get_float_list_from_np(upper)}
+        export_config["training"] = {
+            "seed": seed,
+            "val_fraction": val_fraction,
+            **weights,
+            "direction_sigma": direction_sigma,
+            "flatness_sigma": flatness_sigma,
+        }
+        save_json(export_config, save_dir / "config.json")
 
-                point = batch.cuda() # [B, N, 3]
-                joint = ik_model(point) # [B, DOF]
-                embedded_point = fk_model(joint) # [B, N, 3]
+        for current_epoch in range(start_epoch, epoch):
+            train_metrics = self._run_epoch(
+                train_coverage,
+                train_gestures,
+                robot_points,
+                ik_model,
+                fk_model,
+                collision_classifier,
+                weights,
+                direction_sigma,
+                flatness_sigma,
+                optimizer,
+            )
+            validation_metrics = None
+            if validation_streams is not None:
+                validation_metrics = self._run_epoch(
+                    *validation_streams,
+                    robot_points,
+                    ik_model,
+                    fk_model,
+                    collision_classifier,
+                    weights,
+                    direction_sigma,
+                    flatness_sigma,
+                )
+            append_metrics(
+                save_dir / "metrics.jsonl",
+                {"epoch": current_epoch, "train": train_metrics, "validation": validation_metrics},
+            )
+            torch.save(ik_model.state_dict(), save_dir / f"epoch_{current_epoch}.pth")
+            torch.save(ik_model.state_dict(), save_dir / "last.pth")
+            save_training_state(save_dir / "training_state.pth", ik_model, optimizer, current_epoch)
+            print(f"Epoch {current_epoch} | train {format_loss(train_metrics['total'])}")
 
-                # [Pinch Loss] 
-                # We find it sufficient to only consider thumb-X pinch. Note that idx 0 is thumb.
-                n_finger = point.size(1)
-                pinch_loss = 0
-
-                for i in range(n_finger):
-                    for j in range(i + 1, n_finger):
-                        distance = point[:, i, ...] - point[:, j, ...]
-                        mask = (torch.norm(distance, dim=-1) < 0.015).float()
-                        e_distance = ((embedded_point[:, i, ...] - embedded_point[:, j, ...]) ** 2).sum(dim=-1)
-                        pinch_loss += (mask * e_distance).mean() / (mask.sum() + 1e-7) * point.size(0)
-
-                # [Curvature loss] -- Ensuring flatness.
-                direction = F.normalize(torch.randn_like(point), dim=-1, p=2)
-                scale = 0.002
-                delta1 = direction * scale
-                point_delta_1p = point + delta1 
-                point_delta_1n = point - delta1 
-
-                embedded_point_p = fk_model(ik_model(point_delta_1p))
-                embedded_point_n = fk_model(ik_model(point_delta_1n))
-                curvature_loss = ((embedded_point_p + embedded_point_n - 2 * embedded_point) ** 2).mean()
-                
-                # [Chamfer loss]
-                selected_idx = np.random.randint(0, robot_points.shape[1], 2048) 
-                target = torch.from_numpy(robot_points[:, selected_idx, :]).permute(1, 0, 2).float().cuda()
-                
-                chamfer_loss = 0
-                for i in range(n_keypoints):
-                    chamfer_loss += chamfer_distance(embedded_point[:, i, :].unsqueeze(0), target[:, i, :].unsqueeze(0))
-
-                # [Direction Loss]
-                direction = F.normalize(torch.randn_like(point), dim=-1, p=2)
-                scale = 0.001 + torch.rand(point.size(0)).cuda().unsqueeze(-1).unsqueeze(-1) * 0.01
-                point_delta = point + direction * scale 
-
-                joint_delta = ik_model(point_delta)
-                embedded_point_delta = fk_model(joint_delta)
-
-                d1 = (point_delta - point).reshape(-1, 3) 
-                d2 = (embedded_point_delta - embedded_point).reshape(-1, 3)
-                direction_loss = -(((F.normalize(d1, dim=-1, p=2, eps=1e-5) * F.normalize(d2, dim=-1, p=2, eps=1e-5)).sum(-1))).mean()
-
-                # [Collision loss]
-                # if classifier is not None:
-                #     real_labels = torch.ones(joint.size(0), dtype=torch.long).to(joint.device)
-                #     # Discriminator's output for generated data
-                #     safe_logits = classifier(joint)
-                #     criterion = nn.CrossEntropyLoss()
-                #     # Generator loss is the cross-entropy loss between the fake outputs and the label 1 (real)
-                #     collision_loss = criterion(safe_logits, real_labels)
-                
-                # collision Loss integration pending.
-                collision_loss = torch.tensor([0.0]).cuda()
-
-                loss = direction_loss + \
-                       chamfer_loss * w_chamfer + \
-                       curvature_loss * w_curvature + \
-                       collision_loss * w_collision + \
-                       pinch_loss * w_pinch
-
-                ik_optim.zero_grad()
-                loss.backward()
-                ik_optim.step()
-
-                if batch_idx % 50 == 0:
-                    print(
-                        f"Epoch {epoch} | Losses"
-                        f" - Direction: {format_loss(direction_loss.item())}"
-                        f" - Chamfer: {format_loss(chamfer_loss.item())}"
-                        f" - Curvature: {format_loss(curvature_loss.item())}"
-                        f" - Collision: {format_loss(collision_loss.item())}"
-                        f" - Pinch: {format_loss(pinch_loss.item())}"
-                    )
+        return save_dir
 
 
-            # Saving the checkpoint.
-            torch.save(ik_model.state_dict(), Path(save_dir) / f"epoch_{epoch}.pth")
-            torch.save(ik_model.state_dict(), Path(save_dir) / f"last.pth")
+def build_arg_parser():
+    import argparse
 
-            # This is just for dev phase convenience and can be removed.
-            torch.save(ik_model.state_dict(), Path(last_save_dir) / f"epoch_{epoch}.pth")
-            torch.save(ik_model.state_dict(), Path(last_save_dir) / f"last.pth")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-hand", "--hand", default="allegro_right")
+    parser.add_argument("-human_data", "--human-data", default="human")
+    parser.add_argument("-ckpt_tag", "--tag", default="")
+    parser.add_argument("--device")
+    parser.add_argument("--data-dir")
+    parser.add_argument("--checkpoint-dir")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--val-fraction", type=float, default=0.1)
+    parser.add_argument("--epoch", type=int, default=50)
+    parser.add_argument("--resume")
+    parser.add_argument("--direction-sigma", type=float, default=0.005)
+    parser.add_argument("--flatness-sigma", type=float, default=0.002)
+    for name, default in PAPER_DEFAULTS.items():
+        parser.add_argument(f"--{name.replace('_', '-')}", f"--{name}", dest=name, type=float, default=default)
+    return parser
 
-        return 
+
+def _resolve_human_data(name_or_path, data_dir=None):
+    path = Path(name_or_path)
+    if path.is_file():
+        return path
+    if data_dir is not None:
+        path = Path(data_dir) / f"{name_or_path}.npy"
+        if path.is_file():
+            return path
+        raise FileNotFoundError(f"Human data file not found: {path}")
+    return get_human_data(name_or_path)
 
 
 if __name__ == '__main__':
-    import argparse 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-hand', type=str, default='allegro')
-    parser.add_argument('-human_data', type=str, default='human')
-    parser.add_argument('-ckpt_tag', type=str, default='')
-
-    parser.add_argument('--w_chamfer', type=float, default=80.0)
-    parser.add_argument('--w_curvature', type=float, default=0.1)
-    parser.add_argument('--w_collision', type=float, default=0.0)
-    parser.add_argument('--w_pinch', type=float, default=1.0)
-
-    args = parser.parse_args()
+    args = build_arg_parser().parse_args()
 
     config = get_config(args.hand)
-    trainer = GeoRTTrainer(config)
+    trainer = GeoRTTrainer(
+        config,
+        device=args.device,
+        data_dir=args.data_dir,
+        checkpoint_dir=args.checkpoint_dir,
+    )
 
-    human_data_path = get_human_data(args.human_data)
+    human_data_path = _resolve_human_data(args.human_data, args.data_dir)
     print("Training with human data:", human_data_path.as_posix())
-    
     trainer.train(
-        human_data_path, 
-        tag=args.ckpt_tag, 
-        w_chamfer=args.w_chamfer, 
-        w_curvature=args.w_curvature, 
+        human_data_path,
+        tag=args.tag,
+        epoch=args.epoch,
+        seed=args.seed,
+        val_fraction=args.val_fraction,
+        resume=args.resume,
+        direction_sigma=args.direction_sigma,
+        flatness_sigma=args.flatness_sigma,
+        w_chamfer=args.w_chamfer,
+        w_curvature=args.w_curvature,
         w_collision=args.w_collision,
-        w_pinch=args.w_pinch)
+        w_pinch=args.w_pinch,
+    )

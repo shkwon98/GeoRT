@@ -7,7 +7,6 @@
 import json 
 from geort.utils.path import get_package_root
 from pathlib import Path 
-import os 
 import numpy as np 
 
 
@@ -36,16 +35,16 @@ def load_json(filename):
         return json.load(f)
 
 
-def get_config(config_name):
-    config_root = Path(get_package_root())  / "geort" / "config"
-    all_configs = os.listdir(config_root)
-    
-    for config in all_configs:
-        if config_name in config:
-            return load_json(config_root / config)
+def get_config(name_or_path):
+    path = Path(name_or_path)
+    if path.is_file():
+        return load_json(path)
 
-    config_root_str = config_root.as_posix()
-    assert False, f"Configuration {config_name}.json is not found in {config_root_str}"
+    config_root = Path(get_package_root())  / "geort" / "config"
+    path = config_root / f"{name_or_path}.json"
+    if path.is_file():
+        return load_json(path)
+    raise FileNotFoundError(f"Configuration file not found: {path}")
 
 def parse_config_keypoint_info(config):
     keypoint_links = []

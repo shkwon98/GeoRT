@@ -29,15 +29,18 @@ def get_human_data_output_path(human_data):
     current_dir = Path(os.path.dirname(os.path.realpath(__file__)))
     return (current_dir / ".." / ".." / "data" / human_data).resolve()
 
-def get_human_data(name):
+def get_human_data(name_or_path):
+    path = Path(name_or_path)
+    if path.is_file():
+        return path
+
     data_root = Path(get_data_root())
-    all_data_names = os.listdir(data_root)
-    for data_name in all_data_names:
-        if name in data_name:
-            return data_root / data_name
+    path = data_root / f"{name_or_path}.npy"
+    if path.is_file():
+        return path
+    raise FileNotFoundError(f"Human data file not found: {path}")
 
 
 if __name__ == '__main__':
     print(get_package_root())
     print(get_human_data_output_path("human"))
-

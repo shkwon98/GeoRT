@@ -1,3 +1,40 @@
 [build-system]
-requires = ["setuptools>=61", "wheel"]
+requires = ["setuptools>=61,<77"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "geort"
+version = "0.1"
+description = "Geometric hand retargeting"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.8"
+dependencies = [
+  "numpy>=1.23,<2",
+  "torch>=2.2,<2.4",
+  "tqdm>=4.66,<5",
+]
+
+[project.optional-dependencies]
+training = [
+  "open3d>=0.13,<0.19; python_version < '3.12'",
+  "sapien>=2.2,<3; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version < '3.12'",
+]
+mediapipe = [
+  "mediapipe==0.10.9; python_version < '3.9'",
+  "mediapipe>=0.10.14,<0.11; python_version >= '3.9'",
+  "opencv-python==4.8.1.78; python_version < '3.9'",
+  "opencv-contrib-python==4.8.1.78; python_version < '3.9'",
+  "opencv-python>=4.8,<5; python_version >= '3.9'",
+  "pyrealsense2>=2.54,<3",
+  "scipy>=1.10,<2",
+]
+[dependency-groups]
+dev = ["pytest>=7,<9"]
+manus = ["pyzmq>=26,<27"]
+
+[tool.setuptools.packages.find]
+include = ["geort", "geort.*"]
+
+[tool.setuptools.package-data]
+geort = ["config/*.json", "resources/**/*"]

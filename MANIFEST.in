@@ -1,3 +1,0 @@
-include LICENSE
-include geort/config/*.json
-recursive-include geort/resources *

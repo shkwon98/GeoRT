@@ -6,17 +6,25 @@ Welcome! This repository contains the code for the paper "Geometric Retargeting:
 
 ![Demo GIF](./images/demo.gif)
 ## Installation
-Install the lightweight runtime first, then opt into the simulator or demo stack you need:
-
-GeoRT's pinned simulator-training environment supports CPython 3.8–3.11.
+Install the lightweight core runtime first:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install .
-python -m pip install ".[training]"   # SAPIEN, Open3D, tqdm
-python -m pip install ".[mediapipe]"  # optional camera demo
+```
+
+Core/inference supports Python 3.8+. Simulator training (`.[training]`, SAPIEN 2.x) requires Linux x86_64 with CPython 3.8–3.11; on Python 3.12+ use core/inference only unless you supply compatible simulator dependencies.
+
+```bash
+python -m pip install ".[training]"  # SAPIEN, Open3D, tqdm
+```
+
+For the optional camera demo:
+
+```bash
+python -m pip install ".[mediapipe]"
 ```
 
 `requirements.txt` contains the pinned full environment. Manus/ROS integration remains separate; install `pyzmq` in that environment if you use it.

@@ -3,7 +3,7 @@ numpy==1.24.4 ; python_version < "3.9"
 numpy==1.26.4 ; python_version >= "3.9"
 torch==2.2.2
 
-# Training
+# Training: Linux x86_64 with CPython 3.8-3.11 (SAPIEN 2.x)
 tqdm==4.66.4
 open3d==0.13.0 ; python_version < "3.9"
 open3d==0.18.0 ; python_version >= "3.9"

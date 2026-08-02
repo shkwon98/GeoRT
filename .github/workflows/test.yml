@@ -34,4 +34,5 @@ assert get_human_data("human_alex").is_file()
 assert get_bundled_fk_checkpoint("allegro_right").is_file()
 '
           )
+      - run: python -m geort.trainer --help
       - run: python -m pytest -q

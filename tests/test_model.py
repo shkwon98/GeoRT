@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from geort.model import CollisionClassifier, FingerIK, IKModel
+from geort.model import CollisionClassifier, FingerIK, IKModel, get_finger_ik
 
 
 JOINT_GROUPS = [[0, 1], [2, 3], [4, 5], [6, 7]]
@@ -13,6 +13,13 @@ def test_finger_ik_maps_one_fingertip_to_its_joint_vector():
     output = model(torch.randn(3, 3))
 
     assert output.shape == (3, 2)
+
+
+def test_get_finger_ik_preserves_legacy_sequential_state_keys():
+    model = get_finger_ik(n_joint=2, hidden=8)
+
+    assert isinstance(model, FingerIK)
+    assert "0.weight" in model.state_dict()
 
 
 def test_finger_ik_rejects_non_fingertip_shape():
@@ -36,14 +43,6 @@ def test_ik_model_preserves_input_dtype():
 
     assert output.shape == (2, 8)
     assert output.dtype == torch.float64
-
-
-def test_ik_model_supports_explicit_total_joint_count():
-    model = IKModel(JOINT_GROUPS, num_joints=10, hidden_dim=8).eval()
-
-    output = model(torch.randn(2, 4, 3))
-
-    assert output.shape == (2, 10)
 
 
 def test_ik_model_keeps_legacy_checkpoint_key_layout():

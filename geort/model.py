@@ -48,6 +48,10 @@ class FingerIK(nn.Sequential):
         return super().forward(fingertip)
 
 
+def get_finger_ik(n_joint=4, hidden=128):
+    return FingerIK(num_joints=n_joint, hidden_dim=hidden)
+
+
 class CollisionClassifier(nn.Module):
     """Predicts a collision logit from normalized joint values."""
 
@@ -113,37 +117,20 @@ class FKModel(nn.Module):
 
     
 class IKModel(nn.Module):
-    def __init__(self, keypoint_joints, num_joints=None, hidden_dim=128):
+    def __init__(self, keypoint_joints, hidden_dim=128):
         # keypoint_joints: a list of list.
         # keypoint[i] is the indices of joints that drive the i-th keypoint.
         # Example: [[0,1,2,3],[4,5,6,7],[8,9,10,11],[12,13,14,15]]
 
         super().__init__()
-        if not keypoint_joints or any(not joint for joint in keypoint_joints):
-            raise ValueError("keypoint_joints must contain at least one joint per finger")
-
-        self.keypoint_joints = [tuple(joint) for joint in keypoint_joints]
-        joint_ids = [joint_id for joint in self.keypoint_joints for joint_id in joint]
-        if min(joint_ids) < 0:
-            raise ValueError("joint indices must be non-negative")
-        if len(set(joint_ids)) != len(joint_ids):
-            raise ValueError("a joint may only be assigned to one FingerIK")
-
-        inferred_num_joints = max(joint_ids) + 1
-        self.n_total_joint = inferred_num_joints if num_joints is None else num_joints
-        if self.n_total_joint < inferred_num_joints:
-            raise ValueError("num_joints must include every configured joint index")
-
-        self.num_fingers = len(self.keypoint_joints)
+        self.n_total_joint = sum(len(joint) for joint in keypoint_joints)
+        self.num_fingers = len(keypoint_joints)
         # Keep the registered name for existing IK checkpoint compatibility.
         self.nets = nn.ModuleList([
             FingerIK(num_joints=len(joint), hidden_dim=hidden_dim)
-            for joint in self.keypoint_joints
+            for joint in keypoint_joints
         ])
-
-    @property
-    def finger_models(self):
-        return self.nets
+        self.keypoint_joints = keypoint_joints
 
     def forward(self, x):
         # x:   [B, N, 3], sequence of keypoint.

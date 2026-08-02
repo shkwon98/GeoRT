@@ -7,16 +7,18 @@
 import torch
 import torch.nn as nn
 
+
 def get_finger_fk(n_joint=4, hidden=128):
     return nn.Sequential(
-        nn.Linear(n_joint, hidden), 
-        nn.LeakyReLU(), 
+        nn.Linear(n_joint, hidden),
+        nn.LeakyReLU(),
         nn.BatchNorm1d(hidden),
-        nn.Linear(hidden, hidden), 
-        nn.LeakyReLU(), 
+        nn.Linear(hidden, hidden),
+        nn.LeakyReLU(),
         nn.BatchNorm1d(hidden),
         nn.Linear(hidden, 3)
-    ) 
+    )
+
 
 class FingerIK(nn.Sequential):
     """Maps one fingertip coordinate to the joints of one finger."""
@@ -83,6 +85,7 @@ class CollisionClassifier(nn.Module):
             raise ValueError("Expected joints normalized to [-1, 1]")
         return self.net(joints).squeeze(-1)
 
+
 class FKModel(nn.Module):
     def __init__(self, keypoint_joints):
         # keypoint_joints: a list of list.
@@ -91,7 +94,7 @@ class FKModel(nn.Module):
 
         super().__init__()
         num_fingers = len(keypoint_joints)
-        
+
         self.nets = []
         self.n_total_joint = 0
 
@@ -105,7 +108,7 @@ class FKModel(nn.Module):
         self.keypoint_joints = keypoint_joints
 
     def forward(self, joint):
-        # x: [B, DOF], joint values. normalized to [-1, 1]. 
+        # x: [B, DOF], joint values. normalized to [-1, 1].
         # out:   [B, N, 3], sequence of keypoint.
         keypoints = []
         for i, net in enumerate(self.nets):
@@ -115,7 +118,7 @@ class FKModel(nn.Module):
 
         return torch.stack(keypoints, dim=1)
 
-    
+
 class IKModel(nn.Module):
     def __init__(self, keypoint_joints, hidden_dim=128):
         # keypoint_joints: a list of list.
@@ -134,7 +137,7 @@ class IKModel(nn.Module):
 
     def forward(self, x):
         # x:   [B, N, 3], sequence of keypoint.
-        # out: [B, DOF], joint values. normalized to [-1, 1]. 
+        # out: [B, DOF], joint values. normalized to [-1, 1].
         if x.ndim != 3 or x.shape[1] != self.num_fingers or x.shape[2] != 3:
             raise ValueError(
                 f"Expected keypoints with shape [B, {self.num_fingers}, 3], "
@@ -144,5 +147,5 @@ class IKModel(nn.Module):
         out = x.new_zeros((x.size(0), self.n_total_joint))
         for i, net in enumerate(self.nets):
             joint = net(x[:, i])
-            out[:, self.keypoint_joints[i]] = joint 
-        return out 
+            out[:, self.keypoint_joints[i]] = joint
+        return out

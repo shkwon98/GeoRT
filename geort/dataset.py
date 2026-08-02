@@ -6,6 +6,7 @@
 import numpy as np
 from torch.utils.data import Dataset
 
+
 def upsample_array(x, K=50000):
     n = x.shape[0]
     if n == 0:
@@ -16,10 +17,10 @@ def upsample_array(x, K=50000):
 
 class MultiPointDataset(Dataset):
     def __init__(self, points):
-        self.points = np.array(points) # [Num_Fingers, Num_Samples, 3]
+        self.points = np.array(points)  # [Num_Fingers, Num_Samples, 3]
 
     @staticmethod
-    def from_points(points, n, resample_to=50000, resample_resolution=0.001):  
+    def from_points(points, n, resample_to=50000, resample_resolution=0.001):
         '''
             This is the actual initialization function. 
         '''
@@ -49,7 +50,8 @@ class GestureDataset(Dataset):
     def __init__(self, frames):
         self.frames = np.array(frames)
         if self.frames.ndim != 3 or self.frames.shape[-1] != 3:
-            raise ValueError("Expected aligned gesture frames with shape [T, F, 3]")
+            raise ValueError(
+                "Expected aligned gesture frames with shape [T, F, 3]")
 
     def __len__(self):
         return self.frames.shape[0]
@@ -64,13 +66,15 @@ class CollisionDataset(Dataset):
         self.qpos = data["qpos"].astype(np.float32)
         self.collision = data["collision"].astype(np.float32)
         if len(self.qpos) != len(self.collision):
-            raise ValueError("qpos and collision must contain the same number of samples")
+            raise ValueError(
+                "qpos and collision must contain the same number of samples")
 
     def __len__(self):
         return len(self.qpos)
 
     def __getitem__(self, idx):
         return {"qpos": self.qpos[idx], "collision": self.collision[idx]}
+
 
 class RobotKinematicsDataset:
     def __init__(self, qpos_keypoint_file, keypoint_names):
@@ -81,10 +85,10 @@ class RobotKinematicsDataset:
         print("Keypoint Names", self.keypoint_names)
         self.n = len(self.qpos)
         return
-    
+
     def __len__(self):
         return self.n
-    
+
     def __getitem__(self, idx):
         qpos = self.qpos[idx]
 
@@ -100,6 +104,8 @@ class RobotKinematicsDataset:
             all_keypoint_data.append(self.keypoints[keypoint_name])
         return np.array(all_keypoint_data)
 
+
 if __name__ == '__main__':
-    dataset = RobotJointKeypointDataset("../data/allegro_native.npz",["link_3.0_tip", "link_3.0_tip"])
+    dataset = RobotJointKeypointDataset(
+        "../data/allegro_native.npz", ["link_3.0_tip", "link_3.0_tip"])
     print(dataset[0])

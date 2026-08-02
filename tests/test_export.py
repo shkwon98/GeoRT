@@ -13,8 +13,10 @@ def _write_checkpoint(checkpoint_root):
         {
             "joint_order": ["joint_0", "joint_1"],
             "fingertip_link": [
-                {"link": "finger_0", "center_offset": [0, 0, 0], "human_hand_id": 0, "joint": ["joint_0"]},
-                {"link": "finger_1", "center_offset": [0, 0, 0], "human_hand_id": 1, "joint": ["joint_1"]},
+                {"link": "finger_0", "center_offset": [
+                    0, 0, 0], "human_hand_id": 0, "joint": ["joint_0"]},
+                {"link": "finger_1", "center_offset": [
+                    0, 0, 0], "human_hand_id": 1, "joint": ["joint_1"]},
             ],
             "joint": {"lower": [-1.0, -2.0], "upper": [1.0, 2.0]},
         },
@@ -37,8 +39,10 @@ def test_load_model_is_cpu_safe_and_selects_exact_epoch(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     model = load_model(checkpoint_dir, device="cpu")
-    epoch_zero = load_model("two_finger", epoch=0, checkpoint_root=checkpoint_root, device="cpu")
+    epoch_zero = load_model("two_finger", epoch=0,
+                            checkpoint_root=checkpoint_root, device="cpu")
 
     assert model.device.type == "cpu"
-    np.testing.assert_allclose(model.forward(np.zeros((2, 3), dtype=np.float32)), [0.0, 0.0])
+    np.testing.assert_allclose(model.forward(
+        np.zeros((2, 3), dtype=np.float32)), [0.0, 0.0])
     assert torch.all(epoch_zero.model.nets[0][0].bias == 0.25)

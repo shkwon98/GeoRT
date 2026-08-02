@@ -9,24 +9,26 @@ from geort.env.hand import HandKinematicModel
 from geort import load_model, get_config
 import argparse
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-hand', type=str, default='allegro')
-    parser.add_argument('-ckpt_tag', type=str, default='alex')  # Your CKPT Tag.
+    # Your CKPT Tag.
+    parser.add_argument('-ckpt_tag', type=str, default='alex')
 
     args = parser.parse_args()
 
     # GeoRT Model.
     model = load_model(args.ckpt_tag)
-    
+
     # Motion Capture.
     mocap = MediaPipeMocap()
-    
+
     # Robot Simulation.
     config = get_config(args.hand)
     hand = HandKinematicModel.build_from_config(config, render=True)
     viewer_env = hand.get_viewer_env()
-    
+
     # Run!
     while True:
         viewer_env.update()
@@ -38,7 +40,8 @@ def main():
             hand.set_qpos_target(qpos)
 
         if result['status'] == 'quit':
-            break 
+            break
+
 
 if __name__ == '__main__':
     main()

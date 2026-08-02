@@ -34,7 +34,8 @@ PAPER_DEFAULTS = {
     "w_collision": 1e-4,
 }
 
-RESUME_HAND_KEYS = ("name", "urdf_path", "base_link", "joint_order", "fingertip_link", "joint")
+RESUME_HAND_KEYS = ("name", "urdf_path", "base_link",
+                    "joint_order", "fingertip_link", "joint")
 
 
 def validate_resume_config(current_config, saved_config, expected_training):
@@ -65,8 +66,10 @@ def split_aligned_frames(frames, val_fraction, seed):
     if len(frames) < 2:
         raise ValueError("Validation requires at least two frames")
 
-    validation_count = min(len(frames) - 1, max(1, round(len(frames) * val_fraction)))
-    validation_indices = np.sort(np.random.default_rng(seed).permutation(len(frames))[:validation_count])
+    validation_count = min(
+        len(frames) - 1, max(1, round(len(frames) * val_fraction)))
+    validation_indices = np.sort(np.random.default_rng(
+        seed).permutation(len(frames))[:validation_count])
     train_mask = np.ones(len(frames), dtype=bool)
     train_mask[validation_indices] = False
     return frames[train_mask], frames[validation_indices]
@@ -104,7 +107,8 @@ def _json_default(value):
         return value.item()
     if isinstance(value, np.generic):
         return value.item()
-    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+    raise TypeError(
+        f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 def append_metrics(path, metrics):
@@ -132,24 +136,28 @@ def load_training_state(path, model, optimizer, device):
     restore_rng_state(state["rng_state"])
     return state["epoch"] + 1
 
+
 def merge_dict_list(dl):
     keys = dl[0].keys()
-    
+
     result = {k: [] for k in keys}
     for data in dl:
         for k in keys:
             result[k].append(data[k])
-    
+
     result = {k: np.array(v) for k, v in result.items()}
     return result
 
+
 def format_loss(value):
     return f"{value:.4e}" if math.fabs(value) < 1e-3 else f"{value:.4f}"
+
 
 def get_float_list_from_np(np_vector):
     float_list = np_vector.tolist()
     float_list = [float(x) for x in float_list]
     return float_list
+
 
 def generate_current_timestring():
     """
@@ -157,14 +165,18 @@ def generate_current_timestring():
     """
     return datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
+
 class GeoRTTrainer:
     def __init__(self, config, device=None, data_dir=None, checkpoint_dir=None):
         from geort.env.hand import HandKinematicModel
 
         self.config = config
-        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        self.data_dir = Path(data_dir) if data_dir is not None else Path(get_data_root())
-        self.checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir is not None else Path(get_checkpoint_root())
+        self.device = torch.device(device or (
+            "cuda" if torch.cuda.is_available() else "cpu"))
+        self.data_dir = Path(
+            data_dir) if data_dir is not None else Path(get_data_root())
+        self.checkpoint_dir = Path(
+            checkpoint_dir) if checkpoint_dir is not None else Path(get_checkpoint_root())
         self.hand = HandKinematicModel.build_from_config(self.config)
 
     def get_robot_pointcloud(self, keypoint_names):
@@ -173,7 +185,7 @@ class GeoRTTrainer:
         '''
         kinematics_dataset = self.get_robot_kinematics_dataset()
         return kinematics_dataset.export_robot_pointcloud(keypoint_names)
-        
+
     def get_robot_kinematics_dataset(self):
         '''
             Utility getter function. Return the robot kinematics dataset
@@ -181,10 +193,11 @@ class GeoRTTrainer:
         dataset_path = self.get_robot_kinematics_dataset_path(postfix=True)
         if not dataset_path.exists():
             self.generate_robot_kinematics_dataset(n_total=100000, save=True)
-        
+
         keypoint_names = self.get_keypoint_info()["link"]
 
-        kinematics_dataset = RobotKinematicsDataset(dataset_path, keypoint_names=keypoint_names)
+        kinematics_dataset = RobotKinematicsDataset(
+            dataset_path, keypoint_names=keypoint_names)
         return kinematics_dataset
 
     def get_robot_kinematics_dataset_path(self, postfix=False):
@@ -192,7 +205,7 @@ class GeoRTTrainer:
             Utility getter function. Return the path to the robot kinematics dataset.
         '''
         data_name = self.config["name"]
-        
+
         return self.data_dir / (f"{data_name}.npz" if postfix else data_name)
 
     def get_keypoint_info(self):
@@ -207,7 +220,7 @@ class GeoRTTrainer:
             keypoint_links.append(info["link"])
             keypoint_offsets.append(info['center_offset'])
             keypoint_human_ids.append(info['human_hand_id'])
-            
+
             keypoint_joint = []
             for joint in info["joint"]:
                 keypoint_joint.append(joint_order.index(joint))
@@ -221,7 +234,7 @@ class GeoRTTrainer:
             "human_id": keypoint_human_ids,
         }
 
-        return out 
+        return out
 
     def generate_robot_kinematics_dataset(self, n_total=100000, save=True):
         '''
@@ -230,25 +243,29 @@ class GeoRTTrainer:
             - The keypoint order is specified by "fingertip_link" field in configuration.
         '''
         info = self.get_keypoint_info()
-        
-        self.hand.initialize_keypoint(keypoint_link_names=info["link"], keypoint_offsets=info["offset"])
 
-        joint_range_low, joint_range_high = self.hand.get_joint_limit() # joint order is based on user config specification.
+        self.hand.initialize_keypoint(
+            keypoint_link_names=info["link"], keypoint_offsets=info["offset"])
+
+        # joint order is based on user config specification.
+        joint_range_low, joint_range_high = self.hand.get_joint_limit()
         joint_range_low = np.array(joint_range_low)
         joint_range_high = np.array(joint_range_high)
 
         all_data_qpos = []
         all_data_keypoint = []
-        
+
         for _ in tqdm(range(n_total)):
-            qpos = np.random.uniform(0, 1, len(joint_range_low)) * (joint_range_high - joint_range_low) + joint_range_low
+            qpos = np.random.uniform(0, 1, len(
+                joint_range_low)) * (joint_range_high - joint_range_low) + joint_range_low
             keypoint = self.hand.keypoint_from_qpos(qpos)
             all_data_qpos.append(qpos)
             all_data_keypoint.append(keypoint)
-            
-        all_data_keypoint = merge_dict_list(all_data_keypoint)    
-        
-        dataset = {"qpos": np.asarray(all_data_qpos, dtype=np.float32), "keypoint": all_data_keypoint}
+
+        all_data_keypoint = merge_dict_list(all_data_keypoint)
+
+        dataset = {"qpos": np.asarray(
+            all_data_qpos, dtype=np.float32), "keypoint": all_data_keypoint}
 
         if save:
             self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -260,7 +277,7 @@ class GeoRTTrainer:
         name = self.config["name"]
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         return self.checkpoint_dir / f"fk_model_{name}.pth"
-    
+
     def get_robot_neural_fk_model(self, force_train=False):
         '''
             This function will return a forward kinematics model.
@@ -270,11 +287,12 @@ class GeoRTTrainer:
         # Normalizer.
         joint_lower_limit, joint_upper_limit = self.hand.get_joint_limit()
         qpos_normalizer = HandFormatter(joint_lower_limit, joint_upper_limit)
-        
+
         # Model.
         print(self.get_keypoint_info()["joint"])
-        fk_model = FKModel(keypoint_joints=self.get_keypoint_info()["joint"]).to(self.device)
-        
+        fk_model = FKModel(keypoint_joints=self.get_keypoint_info()[
+                           "joint"]).to(self.device)
+
         # If the model exists, load it.
         fk_checkpoint_path = self.get_fk_checkpoint_path()
         load_path = fk_checkpoint_path if fk_checkpoint_path.exists() else None
@@ -284,13 +302,15 @@ class GeoRTTrainer:
             except FileNotFoundError:
                 pass
         if load_path is not None and not force_train:
-            fk_model.load_state_dict(torch.load(load_path, map_location=self.device, weights_only=True))
+            fk_model.load_state_dict(torch.load(
+                load_path, map_location=self.device, weights_only=True))
         else:
             # If the model does not exist, train it.
             print("Train Neural Forward Kinematics (FK) from Scratch")
-        
+
             fk_dataset = self.get_robot_kinematics_dataset()
-            fk_dataloader = DataLoader(fk_dataset, batch_size=256, shuffle=True)
+            fk_dataloader = DataLoader(
+                fk_dataset, batch_size=256, shuffle=True)
             fk_optim = optim.Adam(fk_model.parameters(), lr=5e-4)
 
             criterion_fk = nn.MSELoss()
@@ -307,12 +327,13 @@ class GeoRTTrainer:
                     fk_optim.step()
 
                     all_fk_error += loss.item()
-                
+
                 avg_fk_error = all_fk_error / (batch_idx + 1)
-                print(f"Neural FK Training Epoch: {epoch}; Training Loss: {avg_fk_error}")
-            
+                print(
+                    f"Neural FK Training Epoch: {epoch}; Training Loss: {avg_fk_error}")
+
             torch.save(fk_model.state_dict(), fk_checkpoint_path)
-        
+
         return _freeze_model(fk_model)
 
     def get_collision_dataset_path(self):
@@ -320,7 +341,8 @@ class GeoRTTrainer:
 
     def generate_collision_dataset(self, save=True):
         qpos = self.get_robot_kinematics_dataset().qpos.astype(np.float32)
-        collision = np.asarray([self.hand.is_self_collision(q) for q in tqdm(qpos)], dtype=np.float32)
+        collision = np.asarray([self.hand.is_self_collision(q)
+                               for q in tqdm(qpos)], dtype=np.float32)
         dataset = {"qpos": qpos, "collision": collision}
         if save:
             self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -337,15 +359,18 @@ class GeoRTTrainer:
         lower, upper = self.hand.get_joint_limit()
         normalizer = HandFormatter(lower, upper)
         model = CollisionClassifier(len(lower)).to(self.device)
-        path = self.checkpoint_dir / f"collision_model_{self.config['name']}.pth"
+        path = self.checkpoint_dir / \
+            f"collision_model_{self.config['name']}.pth"
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         if path.exists() and not force_train:
-            model.load_state_dict(torch.load(path, map_location=self.device, weights_only=True))
+            model.load_state_dict(torch.load(
+                path, map_location=self.device, weights_only=True))
         else:
             dataset = self.get_collision_dataset()
             if len(dataset) < 2:
-                raise ValueError("Collision classifier training requires at least two samples")
+                raise ValueError(
+                    "Collision classifier training requires at least two samples")
             batch_size = min(256, len(dataset))
             while len(dataset) % batch_size == 1 and batch_size > 2:
                 batch_size -= 1
@@ -355,7 +380,8 @@ class GeoRTTrainer:
             model.train()
             for _ in range(50):
                 for batch in loader:
-                    qpos = normalizer.normalize_torch(batch["qpos"].to(self.device).float())
+                    qpos = normalizer.normalize_torch(
+                        batch["qpos"].to(self.device).float())
                     labels = batch["collision"].to(self.device).float()
                     loss = criterion(model(qpos), labels)
                     optimizer.zero_grad()
@@ -367,14 +393,16 @@ class GeoRTTrainer:
 
     @staticmethod
     def _build_streams(frames, shuffle):
-        coverage = MultiPointDataset.from_points(frames.transpose(1, 0, 2), n=20000)
+        coverage = MultiPointDataset.from_points(
+            frames.transpose(1, 0, 2), n=20000)
         gestures = GestureDataset(frames)
         gesture_batch_size = min(2048, len(gestures))
         while len(gestures) % gesture_batch_size == 1 and gesture_batch_size > 2:
             gesture_batch_size -= 1
         return (
             DataLoader(coverage, batch_size=2048, shuffle=shuffle),
-            DataLoader(gestures, batch_size=gesture_batch_size, shuffle=shuffle),
+            DataLoader(gestures, batch_size=gesture_batch_size,
+                       shuffle=shuffle),
         )
 
     def _compute_losses(
@@ -399,12 +427,15 @@ class GeoRTTrainer:
         flatness_delta = torch.randn_like(gesture_frames) * flatness_sigma
         embedded_positive = fk_model(ik_model(gesture_frames + flatness_delta))
         embedded_negative = fk_model(ik_model(gesture_frames - flatness_delta))
-        curvature = ((embedded_positive + embedded_negative - 2 * gesture_embedded) ** 2).mean()
+        curvature = ((embedded_positive + embedded_negative -
+                     2 * gesture_embedded) ** 2).mean()
 
-        selected = torch.randint(robot_points.shape[1], (coverage_points.size(0),), device=self.device)
+        selected = torch.randint(
+            robot_points.shape[1], (coverage_points.size(0),), device=self.device)
         target = robot_points[:, selected].permute(1, 0, 2)
         chamfer = sum(
-            chamfer_distance(coverage_embedded[:, i].unsqueeze(0), target[:, i].unsqueeze(0))
+            chamfer_distance(coverage_embedded[:, i].unsqueeze(
+                0), target[:, i].unsqueeze(0))
             for i in range(coverage_points.size(1))
         )
 
@@ -412,7 +443,8 @@ class GeoRTTrainer:
         embedded_delta = fk_model(ik_model(gesture_frames + direction_delta))
         d1 = direction_delta.reshape(-1, 3)
         d2 = (embedded_delta - gesture_embedded).reshape(-1, 3)
-        direction = -(F.normalize(d1, dim=-1, eps=1e-5) * F.normalize(d2, dim=-1, eps=1e-5)).sum(-1).mean()
+        direction = -(F.normalize(d1, dim=-1, eps=1e-5) *
+                      F.normalize(d2, dim=-1, eps=1e-5)).sum(-1).mean()
         pinch = pinch_correspondence_loss(gesture_frames, gesture_embedded)
         collision = collision_free_loss(collision_classifier(gesture_joints))
         total = (
@@ -446,7 +478,8 @@ class GeoRTTrainer:
     ):
         training = optimizer is not None
         ik_model.train(training)
-        totals = {name: 0.0 for name in ("total", "direction", "chamfer", "curvature", "pinch", "collision")}
+        totals = {name: 0.0 for name in (
+            "total", "direction", "chamfer", "curvature", "pinch", "collision")}
         gesture_iterator = iter(gesture_loader)
 
         with nullcontext() if training else torch.no_grad():
@@ -488,11 +521,13 @@ class GeoRTTrainer:
         flatness_sigma=0.002,
         **loss_weights,
     ):
-        weights = {name: loss_weights.get(name, default) for name, default in PAPER_DEFAULTS.items()}
+        weights = {name: loss_weights.get(name, default)
+                   for name, default in PAPER_DEFAULTS.items()}
         human_data_path = Path(human_data_path).resolve()
         lower, upper = self.hand.get_joint_limit()
         export_config = self.config.copy()
-        export_config["joint"] = {"lower": get_float_list_from_np(lower), "upper": get_float_list_from_np(upper)}
+        export_config["joint"] = {"lower": get_float_list_from_np(
+            lower), "upper": get_float_list_from_np(upper)}
         training_metadata = {
             "human_data": str(human_data_path),
             "seed": seed,
@@ -506,25 +541,33 @@ class GeoRTTrainer:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         if resume is not None:
             resume_path = Path(resume)
-            save_dir = resume_path if resume_path.is_dir() else self.checkpoint_dir / resume_path
+            save_dir = resume_path if resume_path.is_dir() else self.checkpoint_dir / \
+                resume_path
             if not save_dir.is_dir():
-                raise FileNotFoundError(f"Resume experiment directory not found: {save_dir}")
+                raise FileNotFoundError(
+                    f"Resume experiment directory not found: {save_dir}")
             config_path = save_dir / "config.json"
             state_path = save_dir / "training_state.pth"
             fk_snapshot_path = save_dir / "fk_model.pth"
             collision_snapshot_path = save_dir / "collision_model.pth"
             if not config_path.is_file():
-                raise FileNotFoundError(f"Resume configuration not found: {config_path}")
-            validate_resume_config(export_config, load_json(config_path), training_metadata)
+                raise FileNotFoundError(
+                    f"Resume configuration not found: {config_path}")
+            validate_resume_config(export_config, load_json(
+                config_path), training_metadata)
             if not state_path.is_file():
-                raise FileNotFoundError(f"Training state not found: {state_path}")
+                raise FileNotFoundError(
+                    f"Training state not found: {state_path}")
             if not fk_snapshot_path.is_file():
-                raise FileNotFoundError(f"FK model snapshot not found: {fk_snapshot_path}")
+                raise FileNotFoundError(
+                    f"FK model snapshot not found: {fk_snapshot_path}")
             if not collision_snapshot_path.is_file():
-                raise FileNotFoundError(f"Collision model snapshot not found: {collision_snapshot_path}")
+                raise FileNotFoundError(
+                    f"Collision model snapshot not found: {collision_snapshot_path}")
         else:
             suffix = f"_{tag}" if tag else ""
-            save_dir = self.checkpoint_dir / f"{self.config['name']}_{generate_current_timestring()}{suffix}"
+            save_dir = self.checkpoint_dir / \
+                f"{self.config['name']}_{generate_current_timestring()}{suffix}"
             save_dir.mkdir(parents=True)
             save_json(export_config, save_dir / "config.json")
 
@@ -532,37 +575,48 @@ class GeoRTTrainer:
         human_raw = np.load(human_data_path)
         human_ids = self.get_keypoint_info()["human_id"]
         if human_raw.ndim != 3 or human_raw.shape[-1] < 3 or max(human_ids) >= human_raw.shape[1]:
-            raise ValueError("Human recordings must have shape [T, landmarks, >=3] and contain configured human ids")
+            raise ValueError(
+                "Human recordings must have shape [T, landmarks, >=3] and contain configured human ids")
         human_frames = human_raw[:, human_ids, :3].astype(np.float32)
-        train_frames, validation_frames = split_aligned_frames(human_frames, val_fraction, seed)
+        train_frames, validation_frames = split_aligned_frames(
+            human_frames, val_fraction, seed)
         if len(train_frames) < 2:
             raise ValueError("Training requires at least two aligned frames")
-        train_coverage, train_gestures = self._build_streams(train_frames, shuffle=True)
-        validation_streams = self._build_streams(validation_frames, shuffle=False) if len(validation_frames) else None
+        train_coverage, train_gestures = self._build_streams(
+            train_frames, shuffle=True)
+        validation_streams = self._build_streams(
+            validation_frames, shuffle=False) if len(validation_frames) else None
 
         if resume is not None:
-            fk_model = FKModel(keypoint_joints=self.get_keypoint_info()["joint"]).to(self.device)
-            fk_model.load_state_dict(torch.load(fk_snapshot_path, map_location=self.device, weights_only=True))
+            fk_model = FKModel(keypoint_joints=self.get_keypoint_info()[
+                               "joint"]).to(self.device)
+            fk_model.load_state_dict(torch.load(
+                fk_snapshot_path, map_location=self.device, weights_only=True))
             fk_model = _freeze_model(fk_model)
-            collision_classifier = CollisionClassifier(len(lower)).to(self.device)
+            collision_classifier = CollisionClassifier(
+                len(lower)).to(self.device)
             collision_classifier.load_state_dict(
-                torch.load(collision_snapshot_path, map_location=self.device, weights_only=True)
+                torch.load(collision_snapshot_path,
+                           map_location=self.device, weights_only=True)
             )
             collision_classifier = _freeze_model(collision_classifier)
         else:
             fk_model = self.get_robot_neural_fk_model()
             collision_classifier = self.get_collision_classifier()
             torch.save(fk_model.state_dict(), save_dir / "fk_model.pth")
-            torch.save(collision_classifier.state_dict(), save_dir / "collision_model.pth")
+            torch.save(collision_classifier.state_dict(),
+                       save_dir / "collision_model.pth")
             set_seed(seed)
-        ik_model = IKModel(keypoint_joints=self.get_keypoint_info()["joint"]).to(self.device)
+        ik_model = IKModel(keypoint_joints=self.get_keypoint_info()[
+                           "joint"]).to(self.device)
         optimizer = optim.AdamW(ik_model.parameters(), lr=1e-4)
         robot_points = torch.as_tensor(
             self.get_robot_pointcloud(self.get_keypoint_info()["link"]), dtype=torch.float32, device=self.device
         )
 
         if resume is not None:
-            start_epoch = load_training_state(state_path, ik_model, optimizer, self.device)
+            start_epoch = load_training_state(
+                state_path, ik_model, optimizer, self.device)
         else:
             set_seed(seed)
             start_epoch = 0
@@ -594,12 +648,16 @@ class GeoRTTrainer:
                 )
             append_metrics(
                 save_dir / "metrics.jsonl",
-                {"epoch": current_epoch, "train": train_metrics, "validation": validation_metrics},
+                {"epoch": current_epoch, "train": train_metrics,
+                    "validation": validation_metrics},
             )
-            torch.save(ik_model.state_dict(), save_dir / f"epoch_{current_epoch}.pth")
+            torch.save(ik_model.state_dict(), save_dir /
+                       f"epoch_{current_epoch}.pth")
             torch.save(ik_model.state_dict(), save_dir / "last.pth")
-            save_training_state(save_dir / "training_state.pth", ik_model, optimizer, current_epoch)
-            print(f"Epoch {current_epoch} | train {format_loss(train_metrics['total'])}")
+            save_training_state(save_dir / "training_state.pth",
+                                ik_model, optimizer, current_epoch)
+            print(
+                f"Epoch {current_epoch} | train {format_loss(train_metrics['total'])}")
 
         return save_dir
 
@@ -621,7 +679,8 @@ def build_arg_parser():
     parser.add_argument("--direction-sigma", type=float, default=0.005)
     parser.add_argument("--flatness-sigma", type=float, default=0.002)
     for name, default in PAPER_DEFAULTS.items():
-        parser.add_argument(f"--{name.replace('_', '-')}", f"--{name}", dest=name, type=float, default=default)
+        parser.add_argument(f"--{name.replace('_', '-')}",
+                            f"--{name}", dest=name, type=float, default=default)
     return parser
 
 

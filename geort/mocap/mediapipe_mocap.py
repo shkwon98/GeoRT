@@ -15,6 +15,7 @@ import cv2
 from geort.mocap.camera.realsense import RealSenseCamera
 from geort.utils.path import get_hand_landmarker_path
 
+
 class MediaPipeHandProcessor:
     def __init__(self):
         # we will need to track the orientation, and do some low pass filtering.
@@ -25,10 +26,10 @@ class MediaPipeHandProcessor:
         # Convert rotation matrices to quaternions
         q1 = R.from_matrix(R1).as_quat()
         q2 = R.from_matrix(R2).as_quat()
-        
+
         # Create a slerp object and interpolate
         interpolated = self.slerp(q1, q2, alpha)
-        
+
         # Convert back to a rotation matrix
         R_interpolated = R.from_quat(interpolated).as_matrix()
         return R_interpolated
@@ -48,7 +49,8 @@ class MediaPipeHandProcessor:
         theta_0 = np.arccos(dot_product)  # Angle between quaternions
         sin_theta_0 = np.sin(theta_0)      # Sine of the angle
         theta = theta_0 * t                # Angle for the interpolation
-        sin_theta = np.sin(theta)          # Sine of the angle for the interpolation
+        # Sine of the angle for the interpolation
+        sin_theta = np.sin(theta)
         sin_theta_1 = np.sin(theta_0 - theta)  # Sine of the remaining angle
 
         q_interpolated = (sin_theta_1 * q1 + sin_theta * q2) / sin_theta_0
@@ -72,19 +74,21 @@ class MediaPipeHandProcessor:
 
         if apply_ema:
             if self.last_rotation is not None:
-                rotation_base = self.ema_rotation_matrix(self.last_rotation, rotation_base, 0.75)
+                rotation_base = self.ema_rotation_matrix(
+                    self.last_rotation, rotation_base, 0.75)
             self.last_rotation = rotation_base
-        
+
         transform = np.eye(4)
         transform[:3, :3] = rotation_base
         transform[:3, 3] = tranlation_base
-        
+
         transform_inv = np.linalg.inv(transform)
         hand_detection_result_np = np.array(hand_detection_result)
-        hand_detection_result_np = np.concatenate((np.array(hand_detection_result_np), np.ones((21, 1))), axis=-1)
+        hand_detection_result_np = np.concatenate(
+            (np.array(hand_detection_result_np), np.ones((21, 1))), axis=-1)
 
         hand_detection_result_np = hand_detection_result_np @ transform_inv.transpose()
-         
+
         return hand_detection_result_np
 
 
@@ -92,12 +96,13 @@ class MediaPipeHandDetector:
     MARGIN = 10  # pixels
     FONT_SIZE = 1
     FONT_THICKNESS = 1
-    HANDEDNESS_TEXT_COLOR = (88, 205, 54) # vibrant green
+    HANDEDNESS_TEXT_COLOR = (88, 205, 54)  # vibrant green
 
     def __init__(self):
-        base_options = python.BaseOptions(model_asset_path=str(get_hand_landmarker_path()))
+        base_options = python.BaseOptions(
+            model_asset_path=str(get_hand_landmarker_path()))
         options = vision.HandLandmarkerOptions(base_options=base_options,
-                                            num_hands=2)
+                                               num_hands=2)
         self.detector = vision.HandLandmarker.create_from_options(options)
         self.processor = MediaPipeHandProcessor()
 
@@ -116,28 +121,29 @@ class MediaPipeHandDetector:
             # Draw the hand landmarks.
             hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
             hand_landmarks_proto.landmark.extend([
-            landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in hand_landmarks
+                landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in hand_landmarks
             ])
             solutions.drawing_utils.draw_landmarks(
-            annotated_image,
-            hand_landmarks_proto,
-            solutions.hands.HAND_CONNECTIONS,
-            solutions.drawing_styles.get_default_hand_landmarks_style(),
-            solutions.drawing_styles.get_default_hand_connections_style())
+                annotated_image,
+                hand_landmarks_proto,
+                solutions.hands.HAND_CONNECTIONS,
+                solutions.drawing_styles.get_default_hand_landmarks_style(),
+                solutions.drawing_styles.get_default_hand_connections_style())
 
             # Get the top left corner of the detected hand's bounding box.
             height, width, _ = annotated_image.shape
             x_coordinates = [landmark.x for landmark in hand_landmarks]
             y_coordinates = [landmark.y for landmark in hand_landmarks]
             text_x = int(min(x_coordinates) * width)
-            text_y = int(min(y_coordinates) * height) - MediaPipeHandDetector.MARGIN
+            text_y = int(min(y_coordinates) * height) - \
+                MediaPipeHandDetector.MARGIN
 
             # Draw handedness (left or right hand) on the image.
             cv2.putText(annotated_image, f"{handedness[0].category_name}",
                         (text_x, text_y), cv2.FONT_HERSHEY_DUPLEX,
-                        MediaPipeHandDetector.FONT_SIZE, 
-                        MediaPipeHandDetector.HANDEDNESS_TEXT_COLOR, 
-                        MediaPipeHandDetector.FONT_THICKNESS, 
+                        MediaPipeHandDetector.FONT_SIZE,
+                        MediaPipeHandDetector.HANDEDNESS_TEXT_COLOR,
+                        MediaPipeHandDetector.FONT_THICKNESS,
                         cv2.LINE_AA)
 
         return annotated_image
@@ -148,9 +154,9 @@ class MediaPipeHandDetector:
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_np)
         return mp_image
 
-
     def detect(self, rgb_image):
-        detection_result = self.detector.detect(self.numpy_to_mp_image(rgb_image))
+        detection_result = self.detector.detect(
+            self.numpy_to_mp_image(rgb_image))
 
         hand_landmarks = detection_result.hand_landmarks
         hand_world_landmarks = detection_result.hand_world_landmarks
@@ -166,25 +172,27 @@ class MediaPipeHandDetector:
                 coordinates.append([landmark.x, landmark.y, landmark.z])
 
             detected = True
-            
+
         if len(hand_world_landmarks) > 0:
             world_landmarks = hand_world_landmarks[0]
             for landmark in world_landmarks:
                 world_coordinates.append([landmark.x, landmark.y, landmark.z])
-        annotated_image = self.draw_landmarks_on_image(rgb_image, detection_result)
-        
-        if detected:
-            canonical_coordinates = self.processor.forward(np.array(coordinates))[..., :3]
+        annotated_image = self.draw_landmarks_on_image(
+            rgb_image, detection_result)
 
-        
+        if detected:
+            canonical_coordinates = self.processor.forward(
+                np.array(coordinates))[..., :3]
+
         # print(annotated_image.shape)
         return {
-            'detected': detected, 
-            "annotated_img": annotated_image, 
+            'detected': detected,
+            "annotated_img": annotated_image,
             "coordinates": np.array(coordinates),
             "canonical_coordinates": canonical_coordinates,
             "world_coordinates": np.array(world_coordinates)
         }
+
 
 class MediaPipeMocap:
     def __init__(self):
@@ -196,21 +204,21 @@ class MediaPipeMocap:
         # Run the mocap system.
         rgb = self.camera.get_frame()["rgb"]
         result = self.detector.detect(rgb)
-        
+
         # Show the live detection.
         cv2.imshow("detection", result["annotated_img"])
-          
+
         # Keyboard Control.
         key = cv2.waitKey(1) & 0xFF
 
         if key == ord('q'):
-            self.status = 'quit' 
+            self.status = 'quit'
         elif key == ord('s'):
             self.status = 'recording'
         elif key == ord('e'):
             self.status = 'idle'
 
-        detection = None 
+        detection = None
         if result["detected"]:
             detection = result["canonical_coordinates"]
         return {'status': self.status, "result": detection}
@@ -218,33 +226,32 @@ class MediaPipeMocap:
 
 if __name__ == '__main__':
     # A Naive Mocap System
-    # - DO NOT use this for arm-hand teleop! 
+    # - DO NOT use this for arm-hand teleop!
     # -- very unstable during wrist movement.
     # -- significant hand scale shift during deployment, even optimization cannot save it.
 
-
     # Usage:
-    # Step 1. Execute this script. 
+    # Step 1. Execute this script.
     #         $ python ./geort/mocap/mediapipe_mocap.py --name [YOUR_DATASET_NAME]
     # Step 2. Set the window focus on the pop-up camera view.
     # Step 3. Press "s" to start recording, "e" to pause recording, and "q" to finish.
     #         Hint: move your hand to the center of camera view and press "s" to start.
     #               you will see the terminal start to print current status.
     # Step 4. Now you can train your GeoRT model with your collected [YOUR_DATASET_NAME] data.
-    
+
     import argparse
     import geort
-    
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='human1', type=str) # the data package name.
+    # the data package name.
+    parser.add_argument('--name', default='human1', type=str)
     args = parser.parse_args()
-    
-    dataset_name = args.name 
 
-    # Mocap System.    
+    dataset_name = args.name
+
+    # Mocap System.
     mocap = MediaPipeMocap()
-   
+
     # Data Collection Loop.
     all_results = []
 
@@ -256,7 +263,7 @@ if __name__ == '__main__':
             print("Data collected:", len(all_results))
 
         if result['status'] == 'quit':
-            break 
+            break
 
     # Save!
     save_path = geort.save_human_data(np.array(all_results), args.name)

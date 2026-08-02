@@ -19,9 +19,11 @@ def test_paper_defaults_and_frame_split_are_deterministic():
 
     frames = np.arange(10 * 3 * 3, dtype=np.float32).reshape(10, 3, 3)
     train, validation = split_aligned_frames(frames, val_fraction=0.3, seed=19)
-    repeated_train, repeated_validation = split_aligned_frames(frames, val_fraction=0.3, seed=19)
+    repeated_train, repeated_validation = split_aligned_frames(
+        frames, val_fraction=0.3, seed=19)
 
-    assert PAPER_DEFAULTS == {"w_chamfer": 80.0, "w_curvature": 1.0, "w_pinch": 1000.0, "w_collision": 1e-4}
+    assert PAPER_DEFAULTS == {
+        "w_chamfer": 80.0, "w_curvature": 1.0, "w_pinch": 1000.0, "w_collision": 1e-4}
     np.testing.assert_array_equal(train, repeated_train)
     np.testing.assert_array_equal(validation, repeated_validation)
     assert len(train) == 7
@@ -43,5 +45,7 @@ def test_training_state_restores_model_and_rng(tmp_path):
             parameter.add_(1)
 
     assert load_training_state(path, model, optimizer, "cpu") == 4
-    assert all(torch.equal(parameter, value) for parameter, value in zip(model.parameters(), expected))
-    assert (random.random(), np.random.rand(), torch.rand(1).item()) == next_values
+    assert all(torch.equal(parameter, value)
+               for parameter, value in zip(model.parameters(), expected))
+    assert (random.random(), np.random.rand(),
+            torch.rand(1).item()) == next_values

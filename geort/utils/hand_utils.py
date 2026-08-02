@@ -12,11 +12,13 @@ import numpy as np
 
 # This API is used in collision classifier training.
 # -- pending updates.
+
+
 def check_contact(scene,
                   actors1,
                   actors2,
                   impulse_threshold=1e-10):
-    
+
     actor_set1 = set(actors1)
     actor_set2 = set(actors2)
     for contact in scene.get_contacts():
@@ -32,6 +34,7 @@ def check_contact(scene,
             return True
     return False
 
+
 def get_active_joint_indices(
     articulation, joint_names
 ):
@@ -39,10 +42,12 @@ def get_active_joint_indices(
     joint_indices = [all_joint_names.index(x) for x in joint_names]
     return joint_indices
 
+
 def get_active_joints(articulation, joint_names):
     joints = articulation.get_active_joints()
     joint_indices = get_active_joint_indices(articulation, joint_names)
     return [joints[idx] for idx in joint_indices]
+
 
 def get_entity_by_name(entities, name: str, is_unique=True):
     matched_entities = [x for x in entities if x.get_name() == name]

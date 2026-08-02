@@ -9,6 +9,7 @@
 # and they will give you this.
 import cv2
 
+
 class WebcamCamera:
     def __init__(self, device_index=0):
         self.cap = cv2.VideoCapture(device_index)
@@ -18,7 +19,8 @@ class WebcamCamera:
         # Get default resolution from the webcam
         self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        self.fps = int(self.cap.get(cv2.CAP_PROP_FPS)) or 30  # fallback to 30 if FPS not detected
+        # fallback to 30 if FPS not detected
+        self.fps = int(self.cap.get(cv2.CAP_PROP_FPS)) or 30
 
     def get_frame(self):
         ret, frame = self.cap.read()
@@ -51,6 +53,7 @@ def test():
     finally:
         camera.release()
         cv2.destroyAllWindows()
+
 
 # Example usage
 if __name__ == "__main__":

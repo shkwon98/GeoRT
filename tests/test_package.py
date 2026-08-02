@@ -20,4 +20,5 @@ def test_packaged_resources_and_writable_root(monkeypatch, tmp_path):
     assert get_bundled_fk_checkpoint("allegro_right").is_file()
     assert get_data_root() == tmp_path / "data"
     assert get_checkpoint_root() == tmp_path / "checkpoint"
-    assert get_human_data_output_path("recording") == tmp_path / "data" / "recording"
+    assert get_human_data_output_path(
+        "recording") == tmp_path / "data" / "recording"

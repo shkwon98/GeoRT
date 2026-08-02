@@ -23,14 +23,16 @@ def get_resource_root():
 def _resource_relative_path(path):
     path = Path(path)
     if path.is_absolute() or ".." in path.parts:
-        raise ValueError(f"Expected a package-relative resource path, got: {path}")
+        raise ValueError(
+            f"Expected a package-relative resource path, got: {path}")
     return Path(*(part for part in path.parts if part != "."))
 
 
 def get_resource_path(path):
     resource_path = get_resource_root() / _resource_relative_path(path)
     if not resource_path.exists():
-        raise FileNotFoundError(f"Packaged resource not found: {resource_path}")
+        raise FileNotFoundError(
+            f"Packaged resource not found: {resource_path}")
     return resource_path
 
 

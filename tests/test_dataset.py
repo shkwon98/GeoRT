@@ -7,7 +7,8 @@ from geort.dataset import GestureDataset, upsample_array
 def test_upsample_array_handles_boundary_inputs():
     point = np.array([[1.0, 2.0, 3.0]])
 
-    np.testing.assert_array_equal(upsample_array(point, K=4), np.repeat(point, 4, axis=0))
+    np.testing.assert_array_equal(upsample_array(
+        point, K=4), np.repeat(point, 4, axis=0))
     with pytest.raises(ValueError, match="empty"):
         upsample_array(np.empty((0, 3)), K=4)
 

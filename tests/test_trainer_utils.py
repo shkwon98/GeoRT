@@ -3,6 +3,7 @@ import random
 import sys
 
 import numpy as np
+import pytest
 import torch
 
 
@@ -49,3 +50,45 @@ def test_training_state_restores_model_and_rng(tmp_path):
                for parameter, value in zip(model.parameters(), expected))
     assert (random.random(), np.random.rand(),
             torch.rand(1).item()) == next_values
+
+
+def test_training_size_options_control_streams(monkeypatch):
+    from geort.trainer import GeoRTTrainer, build_arg_parser
+
+    args = build_arg_parser().parse_args([
+        "--coverage-samples", "7",
+        "--coverage-batch-size", "3",
+        "--gesture-batch-size", "2",
+    ])
+    frames = np.arange(4 * 2 * 3, dtype=np.float32).reshape(4, 2, 3)
+
+    monkeypatch.setattr(
+        "geort.trainer.MultiPointDataset.from_points",
+        lambda points, n: torch.utils.data.TensorDataset(
+            torch.zeros(n, points.shape[0], 3)
+        ),
+    )
+    coverage, gestures = GeoRTTrainer._build_streams(
+        frames,
+        shuffle=False,
+        coverage_samples=args.coverage_samples,
+        coverage_batch_size=args.coverage_batch_size,
+        gesture_batch_size=args.gesture_batch_size,
+    )
+
+    assert len(coverage.dataset) == 7
+    assert coverage.batch_size == 3
+    assert gestures.batch_size == 2
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_training_size_options_reject_non_positive_values(value):
+    from geort.trainer import GeoRTTrainer
+
+    frames = np.zeros((4, 2, 3), dtype=np.float32)
+    with pytest.raises(ValueError, match="positive"):
+        GeoRTTrainer._build_streams(
+            frames,
+            shuffle=False,
+            coverage_samples=value,
+        )

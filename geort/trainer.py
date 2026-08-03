@@ -392,15 +392,23 @@ class GeoRTTrainer:
         return _freeze_model(model)
 
     @staticmethod
-    def _build_streams(frames, shuffle):
+    def _build_streams(
+        frames,
+        shuffle,
+        coverage_samples=20000,
+        coverage_batch_size=2048,
+        gesture_batch_size=2048,
+    ):
+        if min(coverage_samples, coverage_batch_size, gesture_batch_size) <= 0:
+            raise ValueError("training sample and batch sizes must be positive")
         coverage = MultiPointDataset.from_points(
-            frames.transpose(1, 0, 2), n=20000)
+            frames.transpose(1, 0, 2), n=coverage_samples)
         gestures = GestureDataset(frames)
-        gesture_batch_size = min(2048, len(gestures))
+        gesture_batch_size = min(gesture_batch_size, len(gestures))
         while len(gestures) % gesture_batch_size == 1 and gesture_batch_size > 2:
             gesture_batch_size -= 1
         return (
-            DataLoader(coverage, batch_size=2048, shuffle=shuffle),
+            DataLoader(coverage, batch_size=coverage_batch_size, shuffle=shuffle),
             DataLoader(gestures, batch_size=gesture_batch_size,
                        shuffle=shuffle),
         )
@@ -519,6 +527,9 @@ class GeoRTTrainer:
         resume=None,
         direction_sigma=0.005,
         flatness_sigma=0.002,
+        coverage_samples=20000,
+        coverage_batch_size=2048,
+        gesture_batch_size=2048,
         **loss_weights,
     ):
         weights = {name: loss_weights.get(name, default)
@@ -535,6 +546,9 @@ class GeoRTTrainer:
             **weights,
             "direction_sigma": direction_sigma,
             "flatness_sigma": flatness_sigma,
+            "coverage_samples": coverage_samples,
+            "coverage_batch_size": coverage_batch_size,
+            "gesture_batch_size": gesture_batch_size,
         }
         export_config["training"] = training_metadata
 
@@ -583,9 +597,19 @@ class GeoRTTrainer:
         if len(train_frames) < 2:
             raise ValueError("Training requires at least two aligned frames")
         train_coverage, train_gestures = self._build_streams(
-            train_frames, shuffle=True)
+            train_frames,
+            shuffle=True,
+            coverage_samples=coverage_samples,
+            coverage_batch_size=coverage_batch_size,
+            gesture_batch_size=gesture_batch_size,
+        )
         validation_streams = self._build_streams(
-            validation_frames, shuffle=False) if len(validation_frames) else None
+            validation_frames,
+            shuffle=False,
+            coverage_samples=coverage_samples,
+            coverage_batch_size=coverage_batch_size,
+            gesture_batch_size=gesture_batch_size,
+        ) if len(validation_frames) else None
 
         if resume is not None:
             fk_model = FKModel(keypoint_joints=self.get_keypoint_info()[
@@ -678,6 +702,9 @@ def build_arg_parser():
     parser.add_argument("--resume")
     parser.add_argument("--direction-sigma", type=float, default=0.005)
     parser.add_argument("--flatness-sigma", type=float, default=0.002)
+    parser.add_argument("--coverage-samples", type=int, default=20000)
+    parser.add_argument("--coverage-batch-size", type=int, default=2048)
+    parser.add_argument("--gesture-batch-size", type=int, default=2048)
     for name, default in PAPER_DEFAULTS.items():
         parser.add_argument(f"--{name.replace('_', '-')}",
                             f"--{name}", dest=name, type=float, default=default)
@@ -720,6 +747,9 @@ if __name__ == '__main__':
         resume=args.resume,
         direction_sigma=args.direction_sigma,
         flatness_sigma=args.flatness_sigma,
+        coverage_samples=args.coverage_samples,
+        coverage_batch_size=args.coverage_batch_size,
+        gesture_batch_size=args.gesture_batch_size,
         w_chamfer=args.w_chamfer,
         w_curvature=args.w_curvature,
         w_collision=args.w_collision,

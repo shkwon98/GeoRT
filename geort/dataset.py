@@ -20,10 +20,13 @@ class MultiPointDataset(Dataset):
         self.points = np.array(points)  # [Num_Fingers, Num_Samples, 3]
 
     @staticmethod
-    def from_points(points, n, resample_to=50000, resample_resolution=0.001):
+    def from_points(points, n, resample_resolution=0.001):
         '''
             This is the actual initialization function. 
         '''
+        if n <= 0:
+            raise ValueError("n must be positive")
+
         import open3d as o3d
 
         num_fingers = points.shape[0]
@@ -35,7 +38,7 @@ class MultiPointDataset(Dataset):
             pcd.points = o3d.utility.Vector3dVector(points[finger_id])
             downpcd = pcd.voxel_down_sample(voxel_size=resample_resolution)
             resampled_points = np.asarray(downpcd.points)
-            all_points.append(upsample_array(resampled_points, K=resample_to))
+            all_points.append(upsample_array(resampled_points, K=n))
 
         return MultiPointDataset(np.array(all_points).astype(np.float32))
 

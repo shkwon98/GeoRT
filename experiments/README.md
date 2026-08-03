@@ -19,8 +19,10 @@ uv sync --extra dexpilot
 For Wuji experiments, point GeoRT at the existing read-only description:
 
 ```bash
-export GEORT_HOME=/absolute/path/to/geort-results
-export WUJI_HAND_DESCRIPTION=${ROS2_WS}/src/robot/wuji_hand_ros2/wuji_hand_description
+export GEORT_ROOT="$(git rev-parse --show-toplevel)"
+export GEORT_HOME=/path/to/geort-results
+export ROS2_WS=/path/to/ros2_ws
+export WUJI_HAND_DESCRIPTION="$ROS2_WS/src/robot/wuji_hand_ros2/wuji_hand_description"
 ```
 
 The example calibration values are placeholders. Measure the rotation, scale,
@@ -90,8 +92,8 @@ built-in retargeter:
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-source ${ROS2_WS}/install/setup.bash
-export WUJI_HAND_DESCRIPTION=${ROS2_WS}/src/robot/wuji_hand_ros2/wuji_hand_description
+source "$ROS2_WS/install/setup.bash"
+export WUJI_HAND_DESCRIPTION="$ROS2_WS/src/robot/wuji_hand_ros2/wuji_hand_description"
 
 ros2 launch wuji_hand_demo vr.launch.py start_retarget:=false
 ```
@@ -100,9 +102,9 @@ In another shell, run the GeoRT-owned bridge on the existing topics:
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-source ${ROS2_WS}/install/setup.bash
-export WUJI_HAND_DESCRIPTION=${ROS2_WS}/src/robot/wuji_hand_ros2/wuji_hand_description
-cd ${GEORT_ROOT}
+source "$ROS2_WS/install/setup.bash"
+export WUJI_HAND_DESCRIPTION="$ROS2_WS/src/robot/wuji_hand_ros2/wuji_hand_description"
+cd "$GEORT_ROOT"
 
 python3 -m experiments.robots.wuji.ros --ros-args \
   -p model:=/absolute/path/to/model.ts \

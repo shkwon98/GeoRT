@@ -28,6 +28,9 @@ uv sync --extra mediapipe
 
 For Manus/ROS, install its local client dependency with `uv sync --group manus`; ROS itself remains system-provided.
 
+For experiments across WebXR, Manus, MediaPipe, Allegro, Wuji, GeoRT, and the
+DexPilot baseline, see the [multi-device experiment guide](experiments/README.md).
+
 GeoRT keeps generated recordings and checkpoints outside an installed wheel. Set `GEORT_HOME` to choose their writable location:
 
 ```bash

@@ -42,27 +42,8 @@ def chamfer_distance(input_points, target_points):
     Returns:
     - chamfer_dist (torch.Tensor): Chamfer distance.
     """
-    B, N, _ = input_points.size()
-    _, M, _ = target_points.size()
-
-    input_points = input_points.clone()
-    target_points = target_points.clone()
-    input_points[..., 1] = input_points[..., 1]
-    target_points[..., 1] = target_points[..., 1]
-
-    input_points = input_points.unsqueeze(2)    # [B, N, 1, 3]
-    target_points = target_points.unsqueeze(1)  # [B, 1, M, 3]
-
-    input_points_repeat = input_points.repeat(1, 1, M, 1)    # [B, N, M, 3]
-    target_points_repeat = target_points.repeat(1, N, 1, 1)  # [B, N, M, 3]
-
-    dist_matrix = torch.sum(
-        (input_points_repeat - target_points_repeat)**2, dim=-1)  # [B, N, M]
-
-    min_dist_a, _ = torch.min(dist_matrix, dim=2)  # [B, N]
-    min_dist_b, _ = torch.min(dist_matrix, dim=1)  # [B, M]
-
-    chamfer_dist = torch.mean(min_dist_a, dim=1) + \
-        torch.mean(min_dist_b, dim=1)
-
-    return chamfer_dist.mean()
+    squared_distances = torch.cdist(input_points, target_points).square()
+    return (
+        squared_distances.amin(dim=2).mean(dim=1)
+        + squared_distances.amin(dim=1).mean(dim=1)
+    ).mean()

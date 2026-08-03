@@ -12,10 +12,6 @@ def get_package_root():
     return Path(__file__).resolve().parents[1]
 
 
-def to_package_root(path):
-    return get_package_root() / path
-
-
 def get_resource_root():
     return get_package_root() / "resources"
 
@@ -103,8 +99,3 @@ def get_human_data(name_or_path):
         if bundled_path.is_file():
             return bundled_path
     raise FileNotFoundError(f"Human data file not found: {data_path}")
-
-
-if __name__ == "__main__":
-    print(get_package_root())
-    print(get_human_data_output_path("human"))

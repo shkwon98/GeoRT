@@ -10,7 +10,6 @@ from mediapipe import solutions
 from mediapipe.framework.formats import landmark_pb2
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-import pyrealsense2 as rs
 import cv2
 from geort.mocap.camera.realsense import RealSenseCamera
 from geort.utils.path import get_hand_landmarker_path

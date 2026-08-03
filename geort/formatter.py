@@ -16,9 +16,6 @@ class HandFormatter:
         self.joint_upper_limit = np.array(joint_upper_limit)
         return
 
-    def normalize(self, x):
-        return ((x - self.joint_lower_limit) / (self.joint_upper_limit - self.joint_lower_limit) - 0.5) * 2
-
     def unnormalize(self, x):
         return (x / 2 + 0.5) * (self.joint_upper_limit - self.joint_lower_limit) + self.joint_lower_limit
 

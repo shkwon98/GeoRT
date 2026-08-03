@@ -75,8 +75,3 @@ def load_model(tag_or_path, epoch=None, checkpoint_root=None, device=None):
         ("last.pth" if epoch is None or epoch < 0 else f"epoch_{epoch}.pth")
     config_path = checkpoint_dir / "config.json"
     return GeoRTRetargetingModel(model_path=model_path, config_path=config_path, device=device)
-
-
-if __name__ == '__main__':
-    # load the model in one line.
-    load_model("allegro_last")

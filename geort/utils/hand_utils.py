@@ -49,14 +49,10 @@ def get_active_joints(articulation, joint_names):
     return [joints[idx] for idx in joint_indices]
 
 
-def get_entity_by_name(entities, name: str, is_unique=True):
+def get_entity_by_name(entities, name: str):
     matched_entities = [x for x in entities if x.get_name() == name]
     if len(matched_entities) > 1:
-        if not is_unique:
-            return matched_entities
-        else:
-            raise RuntimeError(f"Multiple entities with the same name {name}.")
-    elif len(matched_entities) == 1:
+        raise RuntimeError(f"Multiple entities with the same name {name}.")
+    if matched_entities:
         return matched_entities[0]
-    else:
-        return None
+    return None

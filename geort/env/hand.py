@@ -7,19 +7,9 @@
 import numpy as np
 import sapien.core as sapien
 from sapien.utils import Viewer
-from torch.utils.data import DataLoader
-import torch
-import torch.optim as optim
-import torch.nn as nn
-import torch.nn.functional as F
-from geort.utils.config_utils import get_config, save_json
+from geort.utils.config_utils import get_config
 from geort.utils.hand_utils import check_contact, get_entity_by_name, get_active_joints, get_active_joint_indices
 from geort.utils.path import resolve_resource_path
-from datetime import datetime
-from tqdm import tqdm
-import os
-from pathlib import Path
-import math
 
 
 class HandKinematicModel:
@@ -28,7 +18,6 @@ class HandKinematicModel:
                  render=False,
                  hand=None,
                  hand_urdf='',
-                 n_hand_dof=16,
                  base_link='base_link',
                  joint_names=[],
                  # Ideally, these two guys (PD controller args) shouldn't be here.
@@ -184,22 +173,15 @@ class HandKinematicModel:
         '''
         render = kwargs.get("render", False)
         urdf_path = resolve_resource_path(config["urdf_path"])
-        n_hand_dof = len(config["joint_order"])
         base_link = config["base_link"]
         joint_order = config["joint_order"]
 
         model = HandKinematicModel(hand_urdf=str(
-            urdf_path), render=render, n_hand_dof=n_hand_dof, base_link=base_link, joint_names=joint_order)
+            urdf_path), render=render, base_link=base_link, joint_names=joint_order)
         return model
 
     def get_viewer_env(self):
         return HandViewerEnv(self)
-
-    def get_scene(self):
-        return self.scene
-
-    def get_renderer(self):
-        return self.renderer
 
     def set_qpos_target(self, qpos):
         '''
@@ -216,13 +198,13 @@ class HandKinematicModel:
 
 class HandViewerEnv:
     def __init__(self, model):
-        scene = model.get_scene()
+        scene = model.scene
         scene.set_timestep(1 / 100.0)
         scene.set_ambient_light([0.5, 0.5, 0.5])
         scene.add_directional_light([0, 1, -1], [0.5, 0.5, 0.5], shadow=True)
         scene.add_ground(altitude=0)
 
-        viewer = Viewer(model.get_renderer())
+        viewer = Viewer(model.renderer)
         viewer.set_scene(scene)
         viewer.window.set_camera_position([0.1550926, -0.1623763, 0.7064089])
         viewer.window.set_camera_rotation(

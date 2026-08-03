@@ -1,5 +1,5 @@
 {
-    "README!!": "Please see config/template.py for instructions. You can remove this in your config json",
+    "README!!": "Use this file as a complete hand config example. Remove this field in your own config.",
     
     "name": "allegro_left", 
     "urdf_path": "./assets/allegro_left/allegro_hand_left.urdf",

@@ -69,7 +69,7 @@ Note: For the Allegro Hand, you can actually skip this step. However, please fol
 We just need to complete a quick setup process outlined below:
 
 1. Keep your custom robot URDF and meshes in a directory you control. The built-in Allegro assets are bundled with the package.
-2. Create a config file such as ``your_robot_name.json``. Pass its path with ``--hand /path/to/your_robot_name.json``; do not write into an installed package directory. Below is an example for the Allegro hand. For brevity, the details are omitted here, but you can refer to [this](./geort/config/allegro_right.json) for full information. For setup instructions, please read [this](./geort/config/template.py).
+2. Create a config file such as ``your_robot_name.json``. Pass its path with ``--hand /path/to/your_robot_name.json``; do not write into an installed package directory. Below is an abbreviated example; use [the Allegro right-hand config](./geort/config/allegro_right.json) as the complete reference.
 
 ```
 {

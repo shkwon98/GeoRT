@@ -92,3 +92,40 @@ def test_training_size_options_reject_non_positive_values(value):
             shuffle=False,
             coverage_samples=value,
         )
+
+
+@pytest.mark.parametrize("finger_count", [4, 5])
+def test_one_synthetic_epoch_supports_robot_finger_counts(finger_count):
+    from geort.model import CollisionClassifier, FKModel, IKModel
+    from geort.trainer import GeoRTTrainer
+
+    groups = [
+        list(range(start, start + 4))
+        for start in range(0, finger_count * 4, 4)
+    ]
+    trainer = GeoRTTrainer.__new__(GeoRTTrainer)
+    trainer.device = torch.device("cpu")
+    ik = IKModel(groups, hidden_dim=8)
+    fk = FKModel(groups, hidden_dim=8)
+    collision = CollisionClassifier(finger_count * 4, hidden_dim=8)
+    optimizer = torch.optim.AdamW(ik.parameters(), lr=1e-4)
+
+    metrics = trainer._run_epoch(
+        [torch.randn(4, finger_count, 3)],
+        [torch.randn(4, finger_count, 3)],
+        torch.randn(finger_count, 8, 3),
+        ik,
+        fk,
+        collision,
+        {
+            "w_chamfer": 80.0,
+            "w_curvature": 1.0,
+            "w_pinch": 1000.0,
+            "w_collision": 1e-4,
+        },
+        0.005,
+        0.002,
+        optimizer,
+    )
+
+    assert all(np.isfinite(value) for value in metrics.values())

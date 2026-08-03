@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 import geort.model as model_module
@@ -31,3 +32,18 @@ def test_collision_classifier_returns_one_logit_per_joint_vector():
     model = CollisionClassifier(num_joints=8, hidden_dim=8).eval()
 
     assert model(torch.rand(3, 8) * 2 - 1).shape == (3,)
+
+
+@pytest.mark.parametrize("groups", [[], [[]], [[0, 1], [1, 2]], [[0], [2]]])
+def test_joint_groups_reject_empty_duplicate_or_gapped_indices(groups):
+    with pytest.raises(ValueError, match="joint groups"):
+        IKModel(groups)
+    with pytest.raises(ValueError, match="joint groups"):
+        FKModel(groups)
+
+
+def test_ik_supports_five_complete_joint_groups():
+    groups = [list(range(start, start + 4)) for start in range(0, 20, 4)]
+    model = IKModel(groups, hidden_dim=8).eval()
+
+    assert model(torch.randn(2, 5, 3)).shape == (2, 20)

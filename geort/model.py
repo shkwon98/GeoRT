@@ -8,6 +8,21 @@ import torch
 import torch.nn as nn
 
 
+def _validate_joint_groups(keypoint_joints):
+    groups = [list(group) for group in keypoint_joints]
+    flat = [index for group in groups for index in group]
+    if (
+        not groups
+        or any(not group for group in groups)
+        or any(not isinstance(index, int) or index < 0 for index in flat)
+        or sorted(flat) != list(range(len(flat)))
+    ):
+        raise ValueError(
+            "joint groups must be non-empty, disjoint, and cover indices 0..DOF-1"
+        )
+    return groups
+
+
 class FingerFK(nn.Sequential):
     """Maps one finger's joint values to its fingertip coordinate."""
 
@@ -74,7 +89,7 @@ class FKModel(nn.Module):
         # Example: For allegro, [[0,1,2,3],[4,5,6,7],[8,9,10,11],[12,13,14,15]]
 
         super().__init__()
-        num_fingers = len(keypoint_joints)
+        keypoint_joints = _validate_joint_groups(keypoint_joints)
 
         self.nets = []
         self.n_total_joint = 0
@@ -107,6 +122,7 @@ class IKModel(nn.Module):
         # Example: [[0,1,2,3],[4,5,6,7],[8,9,10,11],[12,13,14,15]]
 
         super().__init__()
+        keypoint_joints = _validate_joint_groups(keypoint_joints)
         self.n_total_joint = sum(len(joint) for joint in keypoint_joints)
         self.num_fingers = len(keypoint_joints)
         # Keep the registered name for existing IK checkpoint compatibility.

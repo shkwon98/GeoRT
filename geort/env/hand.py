@@ -180,13 +180,21 @@ class HandKinematicModel:
         '''
             This function is only used during visualization
         '''
-        qpos = np.clip(qpos, self.joint_lower_limit +
-                       1e-3, self.joint_upper_limit - 1e-3)
-        qpos = self.convert_user_order_to_sim_order(qpos)
-        self.qpos_target = qpos
+        qpos = np.asarray(qpos)
+        if qpos.shape != (self.get_n_dof(),):
+            raise ValueError(
+                f"Expected qpos with shape ({self.get_n_dof()},), got {qpos.shape}")
+        if not np.isfinite(qpos).all():
+            raise ValueError("qpos must contain only finite values")
 
-        for i in range(len(qpos)):
-            self.all_joints[i].set_drive_target(self.qpos_target[i])
+        user_qpos = np.clip(
+            qpos,
+            self.joint_lower_limit + 1e-3,
+            self.joint_upper_limit - 1e-3,
+        )
+        self.qpos_target = self.convert_user_order_to_sim_order(user_qpos)
+        for joint, target in zip(self.all_joints, user_qpos):
+            joint.set_drive_target(target)
 
 
 class HandViewerEnv:

@@ -33,7 +33,7 @@ dev = ["pytest>=7,<9"]
 manus = ["scipy>=1.10,<2"]
 
 [tool.setuptools.packages.find]
-include = ["geort", "geort.*"]
+include = ["geort", "geort.*", "experiments", "experiments.*"]
 
 [tool.setuptools.package-data]
 geort = ["config/*.json", "resources/**/*"]

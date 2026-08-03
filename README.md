@@ -188,17 +188,21 @@ while True:
     robot.command(qpos)               # execute!
 
 ```
-We provide some examples in ``geort/mocap/mediapipe_evaluation.py`` and ``geort/mocap/replay_evaluation``. If you have manus glove, you can also refer to ``geort/mocap/manus_evaluation.py``. We recommend (insist) you use a glove-based mocap system instead of MediaPipe, as for vision-based mocap there is significant input distribution shift during deployment!
+The unified evaluator supports replay, MediaPipe, and Manus inputs. We
+recommend a glove-based mocap system instead of MediaPipe because vision-based
+mocap has significant input distribution shift during deployment.
 
 The simplest way for testing is to use the replay evaluation as below. This will show the retargeted trajectory in the viewer. 
 ```bash
-uv run python -m geort.mocap.replay_evaluation -hand allegro_right \
-  -ckpt_tag /absolute/path/to/YOUR_EXPERIMENT -data YOUR_TRAINING_DATA
+uv run python -m geort.mocap.evaluation --mocap replay \
+  --hand allegro_right --ckpt-tag /absolute/path/to/YOUR_EXPERIMENT \
+  --data YOUR_TRAINING_DATA
 ```
 For instance, if ``human`` is in the configured writable data directory
 ```bash
-uv run python -m geort.mocap.replay_evaluation -hand allegro_right \
-  -ckpt_tag /absolute/path/to/YOUR_EXPERIMENT -data human
+uv run python -m geort.mocap.evaluation --mocap replay \
+  --hand allegro_right --ckpt-tag /absolute/path/to/YOUR_EXPERIMENT \
+  --data human
 ```
 ## Contributing
 Feel free to contribute your robot model and mocap system to the GeoRT repository!

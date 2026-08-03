@@ -5,8 +5,7 @@ from geort.utils.hand_utils import check_contact
 
 class Contact:
     def __init__(self, actor0, actor1, impulse=1.0):
-        self.actor0 = actor0
-        self.actor1 = actor1
+        self.bodies = [actor0, actor1]
         self.points = [
             type("Point", (), {"impulse": np.array([impulse, 0.0, 0.0])})()]
 

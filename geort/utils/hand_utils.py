@@ -22,10 +22,11 @@ def check_contact(scene,
     actor_set1 = set(actors1)
     actor_set2 = set(actors2)
     for contact in scene.get_contacts():
+        actor0, actor1 = contact.bodies
         matches = (
-            contact.actor0 in actor_set1 and contact.actor1 in actor_set2
+            actor0 in actor_set1 and actor1 in actor_set2
         ) or (
-            contact.actor0 in actor_set2 and contact.actor1 in actor_set1
+            actor0 in actor_set2 and actor1 in actor_set1
         )
         if matches:
             impulse = [point.impulse for point in contact.points]

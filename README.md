@@ -14,7 +14,7 @@ uv sync --no-dev
 
 `uv.lock` is the reproducible dependency record. Use `uv sync` (without `--no-dev`) to include the test environment.
 
-GeoRT supports CPython 3.11. Simulator training (the `training` extra, SAPIEN 2.x) requires Linux x86_64.
+GeoRT supports CPython 3.12. Simulator training (the `training` extra, SAPIEN 3.x) requires Linux x86_64.
 
 ```bash
 uv sync --extra training  # SAPIEN, Open3D, tqdm

@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import numpy as np
-import sapien.core as sapien
+import sapien
 from sapien.utils import Viewer
 from geort.utils.config_utils import get_config
 from geort.utils.hand_utils import check_contact, get_entity_by_name, get_active_joints, get_active_joint_indices
@@ -26,29 +26,26 @@ class HandKinematicModel:
                  kp=400.0,
                  kd=10):
 
-        self.engine = None
         if scene is None:
-            engine = sapien.Engine()
-
-            if render:
-                renderer = sapien.VulkanRenderer()
-                engine.set_renderer(renderer)
-                print("Enable Render Mode.")
-            else:
-                renderer = None
-            scene_config = sapien.SceneConfig()
-            scene_config.default_dynamic_friction = 1.0
-            scene_config.default_static_friction = 1.0
-            scene_config.default_restitution = 0.00
-            scene_config.contact_offset = 0.02
+            sapien.physx.set_default_material(1.0, 1.0, 0.0)
+            sapien.physx.set_shape_config(contact_offset=0.02)
+            sapien.physx.set_body_config(
+                solver_position_iterations=25,
+                solver_velocity_iterations=1,
+            )
+            scene_config = sapien.physx.get_scene_config()
             scene_config.enable_pcm = False
-            scene_config.solver_iterations = 25
-            scene_config.solver_velocity_iterations = 1
-            scene = engine.create_scene(scene_config)
-            self.engine = engine
+            sapien.physx.set_scene_config(scene_config)
+
+            systems = [
+                sapien.physx.PhysxCpuSystem(),
+                sapien.render.RenderSystem(),
+            ]
+            if render:
+                print("Enable Render Mode.")
+            scene = sapien.Scene(systems)
 
         self.scene = scene
-        self.renderer = renderer
 
         if hand is not None:
             self.hand = hand
@@ -93,10 +90,6 @@ class HandKinematicModel:
             print(i, self.joint_names[i], joint,
                   self.joint_lower_limit[i], self.joint_upper_limit[i])
             joint.set_drive_property(kp, kd, force_limit=10)
-
-    def __del__(self):
-        del self.engine
-        del self.scene
 
     def get_n_dof(self):
         '''
@@ -204,7 +197,7 @@ class HandViewerEnv:
         scene.add_directional_light([0, 1, -1], [0.5, 0.5, 0.5], shadow=True)
         scene.add_ground(altitude=0)
 
-        viewer = Viewer(model.renderer)
+        viewer = Viewer()
         viewer.set_scene(scene)
         viewer.window.set_camera_position([0.1550926, -0.1623763, 0.7064089])
         viewer.window.set_camera_rotation(

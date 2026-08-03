@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+import geort
 import geort.utils.path as path_utils
 from geort.utils.config_utils import get_config, save_json
 from geort.utils.path import get_human_data
@@ -18,3 +19,16 @@ def test_config_and_human_data_lookup_are_exact(tmp_path, monkeypatch):
     assert get_human_data("human.npy") == data_path
     with pytest.raises(FileNotFoundError):
         get_config("allegro")
+
+
+def test_save_human_data_returns_the_existing_npy_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("GEORT_HOME", str(tmp_path))
+    points = np.zeros((2, 21, 3), dtype=np.float32)
+
+    saved = geort.save_human_data(points, "recording")
+
+    assert saved == tmp_path / "data" / "recording.npy"
+    assert saved.is_file()
+    np.testing.assert_array_equal(np.load(saved), points)
+    with pytest.raises(ValueError, match=".npy"):
+        geort.save_human_data(points, "recording.csv")

@@ -202,6 +202,8 @@ class MediaPipeMocap:
     def get(self):
         # Run the mocap system.
         rgb = self.camera.get_frame()["rgb"]
+        if rgb is None:
+            return {"status": self.status, "result": None}
         result = self.detector.detect(rgb)
 
         # Show the live detection.

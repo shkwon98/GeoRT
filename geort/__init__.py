@@ -12,5 +12,9 @@ from geort.export import load_model
 
 def save_human_data(human_data, tag):
     save_path = get_human_data_output_path(tag)
+    if save_path.suffix and save_path.suffix != ".npy":
+        raise ValueError("human recording path must use the .npy suffix")
+    if not save_path.suffix:
+        save_path = save_path.with_suffix(".npy")
     np.save(save_path, human_data)
     return save_path

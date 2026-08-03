@@ -225,7 +225,7 @@ class HandViewerEnv:
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--hand', type=str, default='allegro')
+    parser.add_argument('--hand', type=str, default='allegro_right')
 
     args = parser.parse_args()
 

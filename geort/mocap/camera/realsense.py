@@ -36,7 +36,7 @@ class RealSenseCamera:
             depth_frame = frames.get_depth_frame()
 
             if not color_frame or not depth_frame:
-                return None, None
+                return {"rgb": None, "depth": None}
 
             # Convert images to numpy arrays
             color_image = np.asanyarray(color_frame.get_data())

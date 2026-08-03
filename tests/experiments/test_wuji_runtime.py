@@ -72,3 +72,23 @@ def test_runtime_rejects_metadata_mismatch_before_inference(tmp_path):
     }
     with pytest.raises(ValueError, match="metadata"):
         TorchScriptRuntime(model_path, metadata_path, wrong)
+
+
+def test_runtime_rounds_float32_limits_toward_the_safe_range(tmp_path):
+    model_path, metadata_path = _artifact(tmp_path)
+    metadata = json.loads(metadata_path.read_text())
+    metadata["joint_lower"][0] = 0.0475
+    metadata_path.write_text(json.dumps(metadata))
+    spec = {
+        "name": "wuji_right",
+        "hand_side": "right",
+        "urdf_sha256": "a" * 64,
+        "joint_order": ["right_a", "right_b"],
+    }
+    runtime = TorchScriptRuntime(model_path, metadata_path, spec, alpha=1.0)
+
+    command = runtime.infer(
+        CanonicalFrame(np.zeros((21, 3)), 1.0, "right")
+    )
+
+    assert float(command.qpos[0]) >= 0.0475

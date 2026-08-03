@@ -35,16 +35,30 @@ class TorchScriptRuntime:
             or self.joint_names != tuple(robot_spec.get("joint_order", ()))
         ):
             raise ValueError("model metadata does not match robot specification")
-        self.lower = np.asarray(metadata.get("joint_lower"), dtype=np.float32)
-        self.upper = np.asarray(metadata.get("joint_upper"), dtype=np.float32)
+        raw_lower = np.asarray(metadata.get("joint_lower"), dtype=np.float64)
+        raw_upper = np.asarray(metadata.get("joint_upper"), dtype=np.float64)
         if (
-            self.lower.shape != (len(self.joint_names),)
-            or self.upper.shape != self.lower.shape
-            or not np.isfinite(self.lower).all()
-            or not np.isfinite(self.upper).all()
-            or np.any(self.lower >= self.upper)
+            raw_lower.shape != (len(self.joint_names),)
+            or raw_upper.shape != raw_lower.shape
+            or not np.isfinite(raw_lower).all()
+            or not np.isfinite(raw_upper).all()
+            or np.any(raw_lower >= raw_upper)
         ):
             raise ValueError("model metadata has invalid joint limits")
+        self.lower = raw_lower.astype(np.float32)
+        self.upper = raw_upper.astype(np.float32)
+        self.lower = np.where(
+            self.lower.astype(np.float64) < raw_lower,
+            np.nextafter(self.lower, np.float32(np.inf)),
+            self.lower,
+        )
+        self.upper = np.where(
+            self.upper.astype(np.float64) > raw_upper,
+            np.nextafter(self.upper, np.float32(-np.inf)),
+            self.upper,
+        )
+        if np.any(self.lower >= self.upper):
+            raise ValueError("joint limits collapse at float32 precision")
         if metadata.get("mocap") != "webxr":
             raise ValueError("model metadata must use webxr mocap")
         calibration = metadata.get("calibration", {})

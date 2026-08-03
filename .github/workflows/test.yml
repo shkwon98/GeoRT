@@ -17,7 +17,7 @@ jobs:
       - uses: astral-sh/setup-uv@v8
         with:
           enable-cache: true
-      - run: uv sync --locked
+      - run: uv sync --locked --group manus
       - run: uv run --locked python -m pytest -q
       - run: uv run --locked python -m geort.trainer --help
       - run: uv build

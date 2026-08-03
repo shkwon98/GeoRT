@@ -8,16 +8,33 @@ import torch
 import torch.nn as nn
 
 
-def get_finger_fk(n_joint=4, hidden=128):
-    return nn.Sequential(
-        nn.Linear(n_joint, hidden),
-        nn.LeakyReLU(),
-        nn.BatchNorm1d(hidden),
-        nn.Linear(hidden, hidden),
-        nn.LeakyReLU(),
-        nn.BatchNorm1d(hidden),
-        nn.Linear(hidden, 3)
-    )
+class FingerFK(nn.Sequential):
+    """Maps one finger's joint values to its fingertip coordinate."""
+
+    def __init__(self, num_joints=4, hidden_dim=128):
+        if num_joints < 1:
+            raise ValueError("num_joints must be positive")
+        if hidden_dim < 1:
+            raise ValueError("hidden_dim must be positive")
+
+        super().__init__(
+            nn.Linear(num_joints, hidden_dim),
+            nn.LeakyReLU(),
+            nn.BatchNorm1d(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.BatchNorm1d(hidden_dim),
+            nn.Linear(hidden_dim, 3),
+        )
+        self.num_joints = num_joints
+
+    def forward(self, joints):
+        if joints.ndim != 2 or joints.shape[1] != self.num_joints:
+            raise ValueError(
+                f"Expected joints with shape [B, {self.num_joints}], "
+                f"got {tuple(joints.shape)}"
+            )
+        return super().forward(joints)
 
 
 class FingerIK(nn.Sequential):
@@ -50,44 +67,8 @@ class FingerIK(nn.Sequential):
         return super().forward(fingertip)
 
 
-def get_finger_ik(n_joint=4, hidden=128):
-    return FingerIK(num_joints=n_joint, hidden_dim=hidden)
-
-
-class CollisionClassifier(nn.Module):
-    """Predicts a collision logit from normalized joint values."""
-
-    def __init__(self, num_joints, hidden_dim=128):
-        super().__init__()
-        if num_joints < 1:
-            raise ValueError("num_joints must be positive")
-        if hidden_dim < 1:
-            raise ValueError("hidden_dim must be positive")
-
-        self.num_joints = num_joints
-        self.net = nn.Sequential(
-            nn.Linear(num_joints, hidden_dim),
-            nn.LeakyReLU(),
-            nn.BatchNorm1d(hidden_dim),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LeakyReLU(),
-            nn.BatchNorm1d(hidden_dim),
-            nn.Linear(hidden_dim, 1),
-        )
-
-    def forward(self, joints):
-        if joints.ndim != 2 or joints.shape[1] != self.num_joints:
-            raise ValueError(
-                f"Expected normalized joints with shape [B, {self.num_joints}], "
-                f"got {tuple(joints.shape)}"
-            )
-        if not torch.is_floating_point(joints) or not torch.isfinite(joints).all() or (joints.abs() > 1).any():
-            raise ValueError("Expected joints normalized to [-1, 1]")
-        return self.net(joints).squeeze(-1)
-
-
 class FKModel(nn.Module):
-    def __init__(self, keypoint_joints):
+    def __init__(self, keypoint_joints, hidden_dim=128):
         # keypoint_joints: a list of list.
         # keypoint[i] is the indices of joints that drive the i-th keypoint.
         # Example: For allegro, [[0,1,2,3],[4,5,6,7],[8,9,10,11],[12,13,14,15]]
@@ -99,7 +80,7 @@ class FKModel(nn.Module):
         self.n_total_joint = 0
 
         for joint in keypoint_joints:
-            net = get_finger_fk(n_joint=len(joint))
+            net = FingerFK(num_joints=len(joint), hidden_dim=hidden_dim)
             self.nets.append(net)
             self.n_total_joint += len(joint)
 
@@ -149,3 +130,35 @@ class IKModel(nn.Module):
             joint = net(x[:, i])
             out[:, self.keypoint_joints[i]] = joint
         return out
+
+
+class CollisionClassifier(nn.Module):
+    """Predicts a collision logit from normalized joint values."""
+
+    def __init__(self, num_joints, hidden_dim=128):
+        super().__init__()
+        if num_joints < 1:
+            raise ValueError("num_joints must be positive")
+        if hidden_dim < 1:
+            raise ValueError("hidden_dim must be positive")
+
+        self.num_joints = num_joints
+        self.net = nn.Sequential(
+            nn.Linear(num_joints, hidden_dim),
+            nn.LeakyReLU(),
+            nn.BatchNorm1d(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.BatchNorm1d(hidden_dim),
+            nn.Linear(hidden_dim, 1),
+        )
+
+    def forward(self, joints):
+        if joints.ndim != 2 or joints.shape[1] != self.num_joints:
+            raise ValueError(
+                f"Expected normalized joints with shape [B, {self.num_joints}], "
+                f"got {tuple(joints.shape)}"
+            )
+        if not torch.is_floating_point(joints) or not torch.isfinite(joints).all() or (joints.abs() > 1).any():
+            raise ValueError("Expected joints normalized to [-1, 1]")
+        return self.net(joints).squeeze(-1)

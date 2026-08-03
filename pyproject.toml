@@ -30,7 +30,7 @@ mediapipe = [
 ]
 [dependency-groups]
 dev = ["pytest>=7,<9"]
-manus = ["pyzmq>=26,<27"]
+manus = ["scipy>=1.10,<2"]
 
 [tool.setuptools.packages.find]
 include = ["geort", "geort.*"]

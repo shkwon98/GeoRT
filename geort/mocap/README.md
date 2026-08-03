@@ -13,24 +13,19 @@ GeoRT works best with the glove-based mocap. We provide an example based on the 
 ### Installation
 We need to get Manus gloves and its mocap server installed on a separate windows laptop. Make sure that windows laptop and the host is in the same LAN an ping each other. Then, follows the readme in the manus_client folder to setup. This will build a ROS2 node that can 
 
-After this step, run the following for the right hand in one terminal and proceed to the next section.
+After this step, run the following for the right hand in one terminal.
 ```
 ros2 run manus_client manus_right
 ```
 
-This will create a pipe: windows --> ROS2_CPP_BROADCAST.
+This publishes the existing Manus quaternion stream on `/manus_quats`.
 ### Deployment
 
-In one terminal, run
+With `manus_right` running, start evaluation directly:
 ```
-python ./geort/mocap/manus_mocap_core.py
+python -m geort.mocap.evaluation --mocap manus \
+  --hand YOUR_ROBOT_HAND_IN_CONFIG --ckpt-tag YOUR_CKPT
 ```
-this will start a ROS2 process that fetches data from Manus server on the windows laptop and broadcasts it on the localhost (this process is just a connector to decouple ROS from code, and the pipeline now becomes windows --> ROS2_CPP_BROADCAST --> localhost:PORT BROADCAST)
-
-Then, in another terminal, run
-```
-python ./geort/mocap/manus_evaluation.py -hand YOUR_ROBOT_HAND_IN_CONFIG -ckpt_tag YOUR_CKPT
-```
-This will fetch the data on the localhost:PORT. After launching this, you will be able to do a virtual manus teleop in the pop-up viewer as shown in the Readme teaser.
-
+The evaluator subscribes to `/manus_quats` directly. No localhost relay process
+is required.
 

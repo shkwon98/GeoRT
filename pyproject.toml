@@ -37,6 +37,7 @@ include = ["geort", "geort.*", "experiments", "experiments.*"]
 
 [tool.setuptools.package-data]
 geort = ["config/*.json", "resources/**/*"]
+experiments = ["robots/allegro/*.json", "robots/wuji/*.json", "configs/*.json"]
 
 [[tool.uv.index]]
 name = "pytorch-cu128"

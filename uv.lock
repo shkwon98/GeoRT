@@ -497,6 +497,9 @@ dependencies = [
 dexpilot = [
     { name = "dex-retargeting" },
 ]
+manus = [
+    { name = "scipy" },
+]
 mediapipe = [
     { name = "mediapipe" },
     { name = "opencv-contrib-python" },
@@ -513,9 +516,6 @@ training = [
 dev = [
     { name = "pytest" },
 ]
-manus = [
-    { name = "scipy" },
-]
 
 [package.metadata]
 requires-dist = [
@@ -526,17 +526,17 @@ requires-dist = [
     { name = "opencv-contrib-python", marker = "extra == 'mediapipe'", specifier = ">=4.8,<5" },
     { name = "pyrealsense2", marker = "extra == 'mediapipe'", specifier = ">=2.54,<3" },
     { name = "sapien", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'training'", specifier = ">=3.0.3,<4" },
+    { name = "scipy", marker = "extra == 'manus'", specifier = ">=1.10,<2" },
     { name = "scipy", marker = "extra == 'mediapipe'", specifier = ">=1.10,<2" },
     { name = "setuptools", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'training'", specifier = ">=77,<81" },
     { name = "torch", marker = "platform_machine != 'x86_64' or sys_platform != 'linux'", specifier = ">=2.7,<2.8" },
     { name = "torch", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = ">=2.7,<2.8", index = "https://download.pytorch.org/whl/cu128" },
     { name = "tqdm", specifier = ">=4.66,<5" },
 ]
-provides-extras = ["training", "mediapipe", "dexpilot"]
+provides-extras = ["training", "mediapipe", "dexpilot", "manus"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=7,<9" }]
-manus = [{ name = "scipy", specifier = ">=1.10,<2" }]
 
 [[package]]
 name = "hpp-fcl"

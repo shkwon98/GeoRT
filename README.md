@@ -6,27 +6,21 @@ Welcome! This repository contains the code for the paper "Geometric Retargeting:
 
 ![Demo GIF](./images/demo.gif)
 ## Installation
-Install [uv](https://docs.astral.sh/uv/) first, then create the lightweight core runtime:
+Install [uv](https://docs.astral.sh/uv/) first. Choose one environment:
 
 ```bash
-uv sync --no-dev
+uv sync --no-dev       # Lightweight core runtime
+uv sync --all-extras   # Full research environment, including tests
 ```
 
-`uv.lock` is the reproducible dependency record. Use `uv sync` (without `--no-dev`) to include the test environment.
+`uv.lock` is the reproducible dependency record. To keep the environment small,
+select only the needed extras in one command, for example
+`uv sync --extra training --extra mediapipe`. `training` provides SAPIEN/Open3D
+(Linux x86_64); `mediapipe` provides the camera demo; `manus` provides the
+Manus Python dependency; and `dexpilot` provides the baseline. ROS itself
+remains system-provided.
 
-GeoRT supports CPython 3.12. Simulator training (the `training` extra, SAPIEN 3.x) requires Linux x86_64.
-
-```bash
-uv sync --extra training  # SAPIEN, Open3D, tqdm
-```
-
-For the optional camera demo:
-
-```bash
-uv sync --extra mediapipe
-```
-
-For Manus/ROS, install its local client dependency with `uv sync --group manus`; ROS itself remains system-provided.
+GeoRT supports CPython 3.12.
 
 For experiments across WebXR, Manus, MediaPipe, Allegro, Wuji, GeoRT, and the
 DexPilot baseline, see the [multi-device experiment guide](experiments/README.md).

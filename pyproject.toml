@@ -31,9 +31,11 @@ mediapipe = [
 dexpilot = [
   "dex-retargeting>=0.4,<0.5",
 ]
+manus = [
+  "scipy>=1.10,<2",
+]
 [dependency-groups]
 dev = ["pytest>=7,<9"]
-manus = ["scipy>=1.10,<2"]
 
 [tool.setuptools.packages.find]
 include = ["geort", "geort.*", "experiments", "experiments.*"]

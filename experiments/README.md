@@ -7,14 +7,14 @@ GeoRT or DexPilot sees it. Generated runs live under
 
 ## Environment
 
-GeoRT uses CPython 3.12. Install simulator dependencies for training and exact
-kinematics evaluation, and add the optional upstream DexPilot baseline only
-when needed:
+GeoRT uses CPython 3.12. For the complete experiment environment:
 
 ```bash
-uv sync --extra training
-uv sync --extra dexpilot
+uv sync --all-extras
 ```
+
+For GeoRT-only experiments, `uv sync --extra training` is sufficient; add
+`--extra dexpilot` only when running that baseline.
 
 For Wuji experiments, point GeoRT at the existing read-only description:
 

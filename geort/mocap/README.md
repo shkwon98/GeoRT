@@ -11,6 +11,12 @@ Please use a mocap glove. If you insist on using a vision-based mocap system, co
 GeoRT works best with the glove-based mocap. We provide an example based on the Manus gloves.
 
 ### Installation
+Install the Manus Python dependency:
+```
+uv sync --extra manus
+```
+ROS itself remains system-provided.
+
 We need to get Manus gloves and its mocap server installed on a separate windows laptop. Make sure that windows laptop and the host is in the same LAN an ping each other. Then, follows the readme in the manus_client folder to setup. This will build a ROS2 node that can 
 
 After this step, run the following for the right hand in one terminal.
@@ -28,4 +34,3 @@ python -m geort.mocap.evaluation --mocap manus \
 ```
 The evaluator subscribes to `/manus_quats` directly. No localhost relay process
 is required.
-

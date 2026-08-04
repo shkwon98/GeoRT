@@ -26,6 +26,7 @@ def test_fk_hierarchy_uses_finger_modules_and_keeps_checkpoint_keys():
     assert all(isinstance(net, model_module.FingerFK) for net in model.nets)
     assert model(torch.randn(2, 8, dtype=torch.float64)).shape == (2, 4, 3)
     assert "nets.0.0.weight" in model.state_dict()
+    assert not hasattr(model, "n_total_joint")
 
 
 def test_collision_classifier_returns_one_logit_per_joint_vector():

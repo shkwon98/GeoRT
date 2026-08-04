@@ -90,16 +90,10 @@ class FKModel(nn.Module):
 
         super().__init__()
         keypoint_joints = _validate_joint_groups(keypoint_joints)
-
-        self.nets = []
-        self.n_total_joint = 0
-
-        for joint in keypoint_joints:
-            net = FingerFK(num_joints=len(joint), hidden_dim=hidden_dim)
-            self.nets.append(net)
-            self.n_total_joint += len(joint)
-
-        self.nets = nn.ModuleList(self.nets)
+        self.nets = nn.ModuleList([
+            FingerFK(num_joints=len(joint), hidden_dim=hidden_dim)
+            for joint in keypoint_joints
+        ])
 
         self.keypoint_joints = keypoint_joints
 

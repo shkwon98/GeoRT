@@ -3,7 +3,14 @@ import pytest
 import sys
 from types import SimpleNamespace
 
-from geort.dataset import GestureDataset, MultiPointDataset, upsample_array
+from torch.utils.data import Dataset
+
+from geort.dataset import (
+    GestureDataset,
+    MultiPointDataset,
+    RobotKinematicsDataset,
+    upsample_array,
+)
 
 
 def test_upsample_array_handles_boundary_inputs():
@@ -41,3 +48,20 @@ def test_from_points_honors_requested_sample_count(monkeypatch):
     assert dataset.points.shape == (2, 7, 3)
     with pytest.raises(ValueError, match="n must be positive"):
         MultiPointDataset.from_points(points, n=0)
+
+
+def test_robot_kinematics_dataset_uses_torch_dataset_protocol(tmp_path):
+    path = tmp_path / "kinematics.npz"
+    np.savez(
+        path,
+        qpos=np.array([[1.0, 2.0], [3.0, 4.0]]),
+        keypoint=np.array(
+            {"tip": np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])},
+            dtype=object,
+        ),
+    )
+
+    dataset = RobotKinematicsDataset(path, ["tip"])
+
+    assert isinstance(dataset, Dataset)
+    assert len(dataset) == 2

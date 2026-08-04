@@ -19,13 +19,15 @@ class HandKinematicModel:
                  hand=None,
                  hand_urdf='',
                  base_link='base_link',
-                 joint_names=[],
+                 joint_names=None,
                  # Ideally, these two guys (PD controller args) shouldn't be here.
                  # -- There should be a controller class. I leave them here for code simplicity (maybe truth: or because I am lazy).
                  # If you see your hand model doing something weird (in the simulation viewer below), tune them.
                  kp=400.0,
                  kd=10):
 
+        if joint_names is None:
+            joint_names = []
         if scene is None:
             sapien.physx.set_default_material(1.0, 1.0, 0.0)
             sapien.physx.set_shape_config(contact_offset=0.02)
@@ -59,19 +61,17 @@ class HandKinematicModel:
         self.pmodel = self.hand.create_pinocchio_model()
 
         # Setup hand base link.
-        self.base_link = get_entity_by_name(self.hand.get_links(), base_link)
-        self.base_link_idx = self.hand.get_links().index(self.base_link)
+        base_link_entity = get_entity_by_name(self.hand.get_links(), base_link)
+        self.base_link_idx = self.hand.get_links().index(base_link_entity)
 
         # Setup hand dofs.
         self.all_joints = get_active_joints(self.hand, joint_names)
         all_limits = [joint.get_limits() for joint in self.all_joints]
 
-        self.joint_names = joint_names
-        self.user_idx_to_sim_idx = get_active_joint_indices(
-            self.hand, joint_names)
-        print("User-to-Sim Joint", self.user_idx_to_sim_idx)
-        self.sim_idx_to_user_idx = [self.user_idx_to_sim_idx.index(
-            i) for i in range(len(self.user_idx_to_sim_idx))]
+        user_idx_to_sim_idx = get_active_joint_indices(self.hand, joint_names)
+        print("User-to-Sim Joint", user_idx_to_sim_idx)
+        self.sim_idx_to_user_idx = [user_idx_to_sim_idx.index(
+            i) for i in range(len(user_idx_to_sim_idx))]
         print("Sim-to-User Joint", self.sim_idx_to_user_idx)
 
         # this is in user specified "joint_name" order
@@ -87,7 +87,7 @@ class HandKinematicModel:
         self.qpos_target = init_qpos
 
         for i, joint in enumerate(self.all_joints):
-            print(i, self.joint_names[i], joint,
+            print(i, joint_names[i], joint,
                   self.joint_lower_limit[i], self.joint_upper_limit[i])
             joint.set_drive_property(kp, kd, force_limit=10)
 

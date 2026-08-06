@@ -16,13 +16,8 @@ uv sync --all-extras
 For GeoRT-only experiments, `uv sync --extra training` is sufficient; add
 `--extra dexpilot` only when running that baseline.
 
-For Wuji experiments, source its ROS workspace and resolve the existing
-read-only description through the ROS package index:
-
-```bash
-source /path/to/ros2_ws/install/setup.bash
-export WUJI_HAND_DESCRIPTION="$(ros2 pkg prefix --share wuji_hand_description)"
-```
+Wuji URDF and mesh resources used by training and simulation are bundled with
+GeoRT. ROS is only required when connecting inference to a Wuji controller.
 
 The example calibration values are placeholders. Measure the rotation, scale,
 and palm-normal sign for the physical capture device before collecting data.

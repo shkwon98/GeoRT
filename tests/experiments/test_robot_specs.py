@@ -1,17 +1,10 @@
 from pathlib import Path
 
-import pytest
-
 from experiments.robots import load_robot_spec
 
 
-def test_allegro_and_wuji_specs_have_complete_named_joint_groups(tmp_path):
-    description = tmp_path / "wuji_hand_description"
-    (description / "urdf").mkdir(parents=True)
-    (description / "urdf" / "right.urdf").write_text("<robot name='right'/>")
-    wuji = load_robot_spec(
-        "wuji_right", env={"WUJI_HAND_DESCRIPTION": str(description)}
-    )
+def test_allegro_and_wuji_specs_have_complete_named_joint_groups():
+    wuji = load_robot_spec("wuji_right", env={})
     allegro = load_robot_spec("allegro_right")
 
     assert Path(wuji["urdf_path"]).is_file()
@@ -24,9 +17,12 @@ def test_allegro_and_wuji_specs_have_complete_named_joint_groups(tmp_path):
     assert wuji["ros"]["output_topic"] == (
         "/control/hand_right/hand_right_controller/joint_trajectory"
     )
+    assert wuji["geort_config"] == "wuji_right"
     assert allegro["geort_config"] == "allegro_right"
 
 
-def test_wuji_spec_requires_the_external_description_path():
-    with pytest.raises(ValueError, match="WUJI_HAND_DESCRIPTION"):
-        load_robot_spec("wuji_left", env={})
+def test_bundled_wuji_left_does_not_require_external_description():
+    wuji = load_robot_spec("wuji_left", env={})
+
+    assert Path(wuji["urdf_path"]).is_file()
+    assert wuji["geort_config"] == "wuji_left"

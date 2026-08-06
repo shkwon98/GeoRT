@@ -3,6 +3,7 @@ import pytest
 
 pytest.importorskip("sapien")
 from geort.env.hand import HandKinematicModel
+from geort.utils.config_utils import get_config
 
 
 class Joint:
@@ -38,3 +39,9 @@ def test_set_qpos_target_keeps_user_targets_with_user_named_joints():
 def test_set_qpos_target_rejects_invalid_qpos(qpos):
     with pytest.raises(ValueError, match="qpos"):
         _hand_model().set_qpos_target(qpos)
+
+
+def test_bundled_wuji_right_loads_as_a_20_dof_hand():
+    model = HandKinematicModel.build_from_config(get_config("wuji_right"))
+
+    assert model.get_n_dof() == 20

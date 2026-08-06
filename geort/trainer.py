@@ -46,7 +46,8 @@ PAPER_DEFAULTS = {
 }
 
 RESUME_HAND_KEYS = ("name", "urdf_path", "base_link",
-                    "joint_order", "fingertip_link", "joint")
+                    "joint_order", "fingertip_link", "joint",
+                    "collision_group_overrides")
 
 
 def validate_resume_config(current_config, saved_config, expected_training):

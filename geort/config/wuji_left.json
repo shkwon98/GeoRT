@@ -3,6 +3,18 @@
   "hand_side": "left",
   "urdf_path": "./assets/wuji/urdf/left.urdf",
   "base_link": "left_palm_link",
+  "collision_group_overrides": {
+    "left_finger1_link1": 0,
+    "left_finger1_link2": 2,
+    "left_finger2_link1": 0,
+    "left_finger2_link2": 2,
+    "left_finger3_link1": 0,
+    "left_finger3_link2": 2,
+    "left_finger4_link1": 0,
+    "left_finger4_link2": 2,
+    "left_finger5_link1": 0,
+    "left_finger5_link2": 2
+  },
   "joint_order": [
     "left_finger1_joint1", "left_finger1_joint2", "left_finger1_joint3", "left_finger1_joint4",
     "left_finger2_joint1", "left_finger2_joint2", "left_finger2_joint3", "left_finger2_joint4",

@@ -388,6 +388,21 @@ class HandKinematicModel:
 
         model = HandKinematicModel(hand_urdf=str(
             urdf_path), render=render, base_link=base_link, joint_names=joint_order)
+        for link_name, group in config.get(
+                "collision_group_overrides", {}).items():
+            if (
+                isinstance(group, bool)
+                or not isinstance(group, int)
+                or not 0 <= group <= 0xffffffff
+            ):
+                raise ValueError(
+                    f"Invalid collision group for link '{link_name}': {group}")
+            link = get_entity_by_name(model.hand.get_links(), link_name)
+            if link is None:
+                raise ValueError(
+                    f"Collision group link not found: {link_name}")
+            for shape in link.get_collision_shapes():
+                shape.set_collision_groups([group, group, 0, 0])
         return model
 
     def get_viewer_env(self):
@@ -410,6 +425,8 @@ class HandKinematicModel:
             self.joint_upper_limit - 1e-3,
         )
         self.qpos_target = self.convert_user_order_to_sim_order(user_qpos)
+        self.hand.set_qpos(self.qpos_target)
+        self.hand.set_qvel(np.zeros_like(self.qpos_target))
         for joint, target in zip(self.all_joints, user_qpos):
             joint.set_drive_target(target)
 
@@ -498,7 +515,6 @@ class HandViewerEnv:
         self._mocap_inset.set_view(
             self.viewer.window.get_camera_pose(), base_pose
         )
-        self.scene.step()
         self.scene.update_render()
         self.viewer.render()
 

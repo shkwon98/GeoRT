@@ -67,6 +67,38 @@ def test_wuji_collision_filter_distinguishes_open_and_closed_poses():
     assert model.is_self_collision(model.joint_upper_limit - 1e-3)
 
 
+def test_wuji_ignores_only_configured_collision_pairs():
+    model = HandKinematicModel.build_from_config(get_config("wuji_right"))
+    links = {link.name: link for link in model.hand.get_links()}
+
+    def share_ignore_bit(first, second):
+        a = links[first].get_collision_shapes()[0].get_collision_groups()
+        b = links[second].get_collision_shapes()[0].get_collision_groups()
+        return bool(a[2] & b[2])
+
+    assert share_ignore_bit("right_palm_link", "right_finger2_link2")
+    assert not share_ignore_bit("right_finger2_link2", "right_finger3_link3")
+    assert not share_ignore_bit("right_finger2_link3", "right_finger2_tip_link")
+
+
+@pytest.mark.parametrize(
+    ("pairs", "message"),
+    [
+        ("bad", "must be a list"),
+        (
+            [["right_palm_link", "right_finger1_link1"]] * 33,
+            "at most 32",
+        ),
+    ],
+)
+def test_wuji_rejects_invalid_collision_ignore_pairs(pairs, message):
+    config = get_config("wuji_right").copy()
+    config["collision_ignore_pairs"] = pairs
+
+    with pytest.raises(ValueError, match=message):
+        HandKinematicModel.build_from_config(config)
+
+
 def test_wuji_viewer_displays_targets_without_simulating_dynamics():
     model = HandKinematicModel.build_from_config(get_config("wuji_right"))
     target = model.joint_lower_limit + 0.25 * (

@@ -388,21 +388,51 @@ class HandKinematicModel:
 
         model = HandKinematicModel(hand_urdf=str(
             urdf_path), render=render, base_link=base_link, joint_names=joint_order)
-        for link_name, group in config.get(
-                "collision_group_overrides", {}).items():
-            if (
-                isinstance(group, bool)
-                or not isinstance(group, int)
-                or not 0 <= group <= 0xffffffff
-            ):
+        ignore_pairs = config.get("collision_ignore_pairs", [])
+        if not isinstance(ignore_pairs, list):
+            raise ValueError("collision_ignore_pairs must be a list")
+        if len(ignore_pairs) > 32:
+            raise ValueError("collision_ignore_pairs supports at most 32 pairs")
+
+        links = {link.name: link for link in model.hand.get_links()}
+        seen_pairs = set()
+        for index, pair in enumerate(ignore_pairs):
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
                 raise ValueError(
-                    f"Invalid collision group for link '{link_name}': {group}")
-            link = get_entity_by_name(model.hand.get_links(), link_name)
-            if link is None:
+                    "Each collision ignore pair must contain two link names")
+            first_name, second_name = pair
+            if not all(isinstance(name, str) and name for name in pair):
                 raise ValueError(
-                    f"Collision group link not found: {link_name}")
-            for shape in link.get_collision_shapes():
-                shape.set_collision_groups([group, group, 0, 0])
+                    "Each collision ignore pair must contain two link names")
+            if first_name == second_name:
+                raise ValueError(
+                    "Collision ignore pairs must contain distinct links")
+            pair_key = frozenset(pair)
+            if pair_key in seen_pairs:
+                raise ValueError(
+                    f"Duplicate collision ignore pair: {pair}")
+            seen_pairs.add(pair_key)
+
+            bit = 1 << index
+            for link_name in pair:
+                link = links.get(link_name)
+                if link is None:
+                    raise ValueError(
+                        f"Collision ignore link not found: {link_name}")
+                shapes = link.get_collision_shapes()
+                if not shapes:
+                    raise ValueError(
+                        f"Collision ignore link has no collision shapes: {link_name}")
+                for shape in shapes:
+                    group0, group1, group2, group3 = (
+                        shape.get_collision_groups()
+                    )
+                    shape.set_collision_groups([
+                        group0,
+                        group1,
+                        group2 | bit,
+                        (group3 & 0xffff0000) | 1,
+                    ])
         return model
 
     def get_viewer_env(self):

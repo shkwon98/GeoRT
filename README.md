@@ -15,7 +15,8 @@ uv sync --all-extras   # Full research environment, including tests
 
 `uv.lock` is the reproducible dependency record. To keep the environment small,
 select only the needed extras in one command, for example
-`uv sync --extra training --extra mediapipe`. `training` provides SAPIEN/Open3D
+`uv sync --extra training --extra mediapipe`. `training` provides Lightning,
+SAPIEN, and Open3D
 (Linux x86_64); `mediapipe` provides the camera demo; `manus` provides the
 Manus Python dependency; and `dexpilot` provides the baseline. ROS itself
 remains system-provided.
@@ -25,22 +26,28 @@ GeoRT supports CPython 3.12.
 For experiments across WebXR, Manus, MediaPipe, Allegro, Wuji, GeoRT, and the
 DexPilot baseline, see the [multi-device experiment guide](experiments/README.md).
 
-GeoRT keeps generated recordings and checkpoints outside an installed wheel. Set `GEORT_HOME` to choose their writable location:
+GeoRT stores local recordings, robot caches, checkpoints, and experiment runs
+under `.geort/` in the project directory:
 
-```bash
-export GEORT_HOME="$PWD/.geort"
+```text
+.geort/
+├── data/
+├── cache/
+└── runs/
 ```
 
-Without `GEORT_HOME`, a source checkout uses its `data/` and `checkpoint/` directories; an installed wheel uses `~/.local/share/geort/` (or `$XDG_DATA_HOME/geort/`).
+The directory is ignored by Git and created when needed. Set `GEORT_HOME` only
+to place these files on another disk.
 ## Quick Overview
 Upon completion, you will be able to train GeoRT and deploy the checkpoint in a clean and straightforward way. 
 ### Training (1-2min):
 ```bash
 uv run python -m geort.trainer --hand allegro_right --human-data human_alex \
-  --tag geort_1 --device cpu --epoch 50
+  --tag geort_1 --device cpu --epoch 50 --save-every 50
 ```
 
-This writes an experiment directory such as `$GEORT_HOME/checkpoint/allegro_right_YYYY-MM-DD_HH-MM-SS_geort_1/`.
+This writes a run such as
+`.geort/runs/allegro_right_YYYY-MM-DD_HH-MM-SS_geort_1/`.
 
 ### Deploy in code
 ```python
@@ -48,7 +55,7 @@ import geort
 
 model = geort.load_model(
     "/absolute/path/to/allegro_right_YYYY-MM-DD_HH-MM-SS_geort_1",
-    epoch=None,  # last.pth; use epoch=0 for epoch_0.pth
+    epoch=None,  # best.ckpt; use -1 for last.ckpt or a saved epoch number
     device="cpu",
 )
 mocap = ...
@@ -146,7 +153,7 @@ Assuming you saved ``your_robot_name.json`` somewhere writable as described in S
 
 ```bash
 uv run python -m geort.trainer --hand /path/to/your_robot_name.json --human-data human \
-  --tag TAG --device cuda --epoch 50
+  --tag TAG --device cuda --epoch 50 --save-every 50
 ```
 
 Let it train for about 30–50 epochs (approximately 1–2 minutes). You can press Ctrl+C to stop early if you wish. 
@@ -157,15 +164,21 @@ For demo purpose, ``human_alex`` is bundled with GeoRT. For adapting it to a rig
 
 ```bash
 uv run python -m geort.trainer --hand allegro_right --human-data human_alex \
-  --tag geort_1 --device cpu --epoch 50
+  --tag geort_1 --device cpu --epoch 50 --save-every 50
 ```
-This creates ``<checkpoint-root>/allegro_right_<timestamp>_geort_1/``. Resume the same experiment (with the same hand, data, seed, validation split, and loss settings) with:
+This creates ``.geort/runs/allegro_right_<timestamp>_geort_1/``. Resume the same experiment (with the same hand, data, seed, validation split, and loss settings) with:
 
 ```bash
 uv run python -m geort.trainer --hand allegro_right --human-data human_alex \
   --resume /absolute/path/to/allegro_right_<timestamp>_geort_1 \
-  --device cpu --epoch 100
+  --device cpu --epoch 100 --save-every 50
 ```
+
+Lightning keeps `last.ckpt` for resume and `best.ckpt` for the lowest
+deterministic validation loss. `--save-every N` additionally keeps a numbered
+checkpoint every N completed epochs; use `0` to disable numbered checkpoints.
+Inference uses `best.ckpt` by default and falls back to `last.ckpt` when no
+validation split is configured. Metrics are written under `logs/version_N/`.
 
 ### Step 4: Deploy!
 Ok, now we are all set. Use the following code to import and deploy the trained model. 
@@ -189,7 +202,10 @@ The unified evaluator supports replay, MediaPipe, and Manus inputs. We
 recommend a glove-based mocap system instead of MediaPipe because vision-based
 mocap has significant input distribution shift during deployment.
 
-The simplest way for testing is to use the replay evaluation as below. This will show the retargeted trajectory in the viewer. 
+The simplest way for testing is to use the replay evaluation as below. The
+main view shows the robot and predicted fingertips. A fixed metric inset at
+the upper right shows the canonical mocap skeleton, the input landmarks used
+by GeoRT, coordinate axes, and a 50 mm scale bar.
 ```bash
 uv run python -m geort.mocap.evaluation --mocap replay \
   --hand allegro_right --ckpt-tag /absolute/path/to/YOUR_EXPERIMENT \

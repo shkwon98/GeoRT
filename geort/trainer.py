@@ -4,10 +4,8 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import json
-import math
 import random
-from contextlib import nullcontext
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -16,16 +14,29 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from lightning import LightningModule, Trainer
+from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers import CSVLogger
+from lightning.pytorch.utilities.combined_loader import CombinedLoader
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
-from geort.dataset import CollisionDataset, GestureDataset, MultiPointDataset, RobotKinematicsDataset
+from geort.dataset import (
+    CollisionDataset,
+    GestureDataset,
+    MultiPointDataset,
+    RobotKinematicsDataset,
+)
 from geort.formatter import HandFormatter
 from geort.loss import chamfer_distance, collision_free_loss, pinch_correspondence_loss
 from geort.model import CollisionClassifier, FKModel, IKModel
 from geort.utils.config_utils import get_config, load_json, save_json
-from geort.utils.path import get_bundled_fk_checkpoint, get_checkpoint_root, get_data_root, get_human_data
-from tqdm import tqdm
-
+from geort.utils.path import (
+    get_bundled_fk_checkpoint,
+    get_checkpoint_root,
+    get_human_data,
+    get_robot_cache_root,
+)
 
 PAPER_DEFAULTS = {
     "w_chamfer": 80.0,
@@ -86,9 +97,16 @@ def set_seed(seed):
 
 
 def capture_rng_state():
+    numpy_state = np.random.get_state()
     return {
         "python": random.getstate(),
-        "numpy": np.random.get_state(),
+        "numpy": {
+            "bit_generator": numpy_state[0],
+            "state": torch.from_numpy(numpy_state[1].copy()),
+            "position": numpy_state[2],
+            "has_gauss": numpy_state[3],
+            "cached_gaussian": numpy_state[4],
+        },
         "torch": torch.get_rng_state(),
         "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
     }
@@ -96,45 +114,57 @@ def capture_rng_state():
 
 def restore_rng_state(state):
     random.setstate(state["python"])
-    np.random.set_state(state["numpy"])
+    numpy_state = state["numpy"]
+    np.random.set_state((
+        numpy_state["bit_generator"],
+        numpy_state["state"].cpu().numpy(),
+        numpy_state["position"],
+        numpy_state["has_gauss"],
+        numpy_state["cached_gaussian"],
+    ))
     torch.set_rng_state(state["torch"].cpu())
     if state["cuda"] is not None and torch.cuda.is_available():
         torch.cuda.set_rng_state_all([rng.cpu() for rng in state["cuda"]])
 
 
-def _json_default(value):
-    if isinstance(value, torch.Tensor) and value.numel() == 1:
-        return value.item()
-    if isinstance(value, np.generic):
-        return value.item()
-    raise TypeError(
-        f"Object of type {type(value).__name__} is not JSON serializable")
+@contextmanager
+def fixed_rng(seed):
+    state = capture_rng_state()
+    set_seed(seed)
+    try:
+        yield
+    finally:
+        restore_rng_state(state)
 
 
-def append_metrics(path, metrics):
-    with Path(path).open("a", encoding="utf-8") as file:
-        json.dump(metrics, file, default=_json_default)
-        file.write("\n")
+def build_checkpoint_callbacks(save_dir, save_every, has_validation=True):
+    if save_every < 0:
+        raise ValueError("save_every must be non-negative")
 
-
-def save_training_state(path, model, optimizer, epoch):
-    torch.save(
-        {
-            "model_state": model.state_dict(),
-            "optimizer_state": optimizer.state_dict(),
-            "epoch": epoch,
-            "rng_state": capture_rng_state(),
-        },
-        path,
-    )
-
-
-def load_training_state(path, model, optimizer, device):
-    state = torch.load(path, map_location=device, weights_only=False)
-    model.load_state_dict(state["model_state"])
-    optimizer.load_state_dict(state["optimizer_state"])
-    restore_rng_state(state["rng_state"])
-    return state["epoch"] + 1
+    callbacks = [ModelCheckpoint(
+        dirpath=save_dir,
+        filename="best",
+        monitor="validation/total" if has_validation else None,
+        mode="min",
+        save_last=True,
+        save_top_k=1 if has_validation else 0,
+        save_on_train_epoch_end=not has_validation,
+        auto_insert_metric_name=False,
+        enable_version_counter=False,
+    )]
+    if save_every:
+        callbacks.append(
+            ModelCheckpoint(
+                dirpath=save_dir,
+                filename="epoch={epoch:04d}",
+                every_n_epochs=save_every,
+                save_on_train_epoch_end=True,
+                save_top_k=-1,
+                auto_insert_metric_name=False,
+                enable_version_counter=False,
+            )
+        )
+    return callbacks
 
 
 def merge_dict_list(dl):
@@ -147,10 +177,6 @@ def merge_dict_list(dl):
 
     result = {k: np.array(v) for k, v in result.items()}
     return result
-
-
-def format_loss(value):
-    return f"{value:.4e}" if math.fabs(value) < 1e-3 else f"{value:.4f}"
 
 
 def get_float_list_from_np(np_vector):
@@ -166,6 +192,127 @@ def generate_current_timestring():
     return datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
 
+class GeoRTLightningModule(LightningModule):
+    def __init__(
+        self,
+        ik_model,
+        fk_model,
+        collision_classifier,
+        robot_points,
+        weights,
+        direction_sigma,
+        flatness_sigma,
+        validation_seed,
+    ):
+        super().__init__()
+        self.ik_model = ik_model
+        self.fk_model = _freeze_model(fk_model)
+        self.collision_classifier = _freeze_model(collision_classifier)
+        self.register_buffer("robot_points", robot_points, persistent=False)
+        self.weights = weights
+        self.direction_sigma = direction_sigma
+        self.flatness_sigma = flatness_sigma
+        self.validation_seed = validation_seed
+        self._validation_rng_state = None
+
+    def train(self, mode=True):
+        super().train(mode)
+        self.fk_model.eval()
+        self.collision_classifier.eval()
+        return self
+
+    def _compute_losses(self, coverage_points, gesture_frames):
+        coverage_embedded = self.fk_model(self.ik_model(coverage_points))
+        gesture_joints = self.ik_model(gesture_frames)
+        gesture_embedded = self.fk_model(gesture_joints)
+
+        flatness_delta = torch.randn_like(gesture_frames) * self.flatness_sigma
+        embedded_positive = self.fk_model(
+            self.ik_model(gesture_frames + flatness_delta))
+        embedded_negative = self.fk_model(
+            self.ik_model(gesture_frames - flatness_delta))
+        curvature = ((embedded_positive + embedded_negative -
+                      2 * gesture_embedded) ** 2).mean()
+
+        selected = torch.randint(
+            self.robot_points.shape[1],
+            (coverage_points.size(0),),
+            device=self.device,
+        )
+        target = self.robot_points[:, selected].permute(1, 0, 2)
+        chamfer = sum(
+            chamfer_distance(
+                coverage_embedded[:, i].unsqueeze(0),
+                target[:, i].unsqueeze(0),
+            )
+            for i in range(coverage_points.size(1))
+        )
+
+        direction_delta = torch.randn_like(
+            gesture_frames) * self.direction_sigma
+        embedded_delta = self.fk_model(
+            self.ik_model(gesture_frames + direction_delta))
+        d1 = direction_delta.reshape(-1, 3)
+        d2 = (embedded_delta - gesture_embedded).reshape(-1, 3)
+        direction = -(F.normalize(d1, dim=-1, eps=1e-5) *
+                      F.normalize(d2, dim=-1, eps=1e-5)).sum(-1).mean()
+        pinch = pinch_correspondence_loss(gesture_frames, gesture_embedded)
+        collision = collision_free_loss(
+            self.collision_classifier(gesture_joints))
+        total = (
+            direction
+            + self.weights["w_chamfer"] * chamfer
+            + self.weights["w_curvature"] * curvature
+            + self.weights["w_pinch"] * pinch
+            + self.weights["w_collision"] * collision
+        )
+        return {
+            "total": total,
+            "direction": direction,
+            "chamfer": chamfer,
+            "curvature": curvature,
+            "pinch": pinch,
+            "collision": collision,
+        }
+
+    def _shared_step(self, batch, stage):
+        losses = self._compute_losses(batch["coverage"], batch["gesture"])
+        for name, value in losses.items():
+            self.log(
+                f"{stage}/{name}",
+                value,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=name == "total",
+                batch_size=1,
+                sync_dist=True,
+            )
+        return losses["total"]
+
+    def training_step(self, batch, batch_idx):
+        return self._shared_step(batch, "train")
+
+    def validation_step(self, batch, batch_idx):
+        self._shared_step(batch, "validation")
+
+    def configure_optimizers(self):
+        return optim.AdamW(self.ik_model.parameters(), lr=1e-4)
+
+    def on_validation_epoch_start(self):
+        self._validation_rng_state = capture_rng_state()
+        set_seed(self.validation_seed)
+
+    def on_validation_epoch_end(self):
+        restore_rng_state(self._validation_rng_state)
+        self._validation_rng_state = None
+
+    def on_save_checkpoint(self, checkpoint):
+        checkpoint["rng_state"] = capture_rng_state()
+
+    def on_load_checkpoint(self, checkpoint):
+        restore_rng_state(checkpoint["rng_state"])
+
+
 class GeoRTTrainer:
     def __init__(self, config, device=None, data_dir=None, checkpoint_dir=None):
         from geort.env.hand import HandKinematicModel
@@ -174,7 +321,8 @@ class GeoRTTrainer:
         self.device = torch.device(device or (
             "cuda" if torch.cuda.is_available() else "cpu"))
         self.data_dir = Path(
-            data_dir) if data_dir is not None else Path(get_data_root())
+            data_dir
+        ) if data_dir is not None else get_robot_cache_root(self.config)
         self.checkpoint_dir = Path(
             checkpoint_dir) if checkpoint_dir is not None else Path(get_checkpoint_root())
         self.hand = HandKinematicModel.build_from_config(self.config)
@@ -275,8 +423,8 @@ class GeoRTTrainer:
 
     def get_fk_checkpoint_path(self):
         name = self.config["name"]
-        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        return self.checkpoint_dir / f"fk_model_{name}.pth"
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        return self.data_dir / f"fk_model_{name}.pth"
 
     def get_robot_neural_fk_model(self, force_train=False):
         '''
@@ -355,13 +503,15 @@ class GeoRTTrainer:
             self.generate_collision_dataset(save=True)
         return CollisionDataset(path)
 
+    def get_collision_checkpoint_path(self):
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        return self.data_dir / f"collision_model_{self.config['name']}.pth"
+
     def get_collision_classifier(self, force_train=False):
         lower, upper = self.hand.get_joint_limit()
         normalizer = HandFormatter(lower, upper)
         model = CollisionClassifier(len(lower)).to(self.device)
-        path = self.checkpoint_dir / \
-            f"collision_model_{self.config['name']}.pth"
-        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        path = self.get_collision_checkpoint_path()
 
         if path.exists() and not force_train:
             model.load_state_dict(torch.load(
@@ -400,7 +550,8 @@ class GeoRTTrainer:
         gesture_batch_size=2048,
     ):
         if min(coverage_samples, coverage_batch_size, gesture_batch_size) <= 0:
-            raise ValueError("training sample and batch sizes must be positive")
+            raise ValueError(
+                "training sample and batch sizes must be positive")
         coverage = MultiPointDataset.from_points(
             frames.transpose(1, 0, 2), n=coverage_samples)
         gestures = GestureDataset(frames)
@@ -408,120 +559,18 @@ class GeoRTTrainer:
         while len(gestures) % gesture_batch_size == 1 and gesture_batch_size > 2:
             gesture_batch_size -= 1
         return (
-            DataLoader(coverage, batch_size=coverage_batch_size, shuffle=shuffle),
+            DataLoader(coverage, batch_size=coverage_batch_size,
+                       shuffle=shuffle),
             DataLoader(gestures, batch_size=gesture_batch_size,
                        shuffle=shuffle),
         )
-
-    def _compute_losses(
-        self,
-        coverage_points,
-        gesture_frames,
-        robot_points,
-        ik_model,
-        fk_model,
-        collision_classifier,
-        weights,
-        direction_sigma,
-        flatness_sigma,
-    ):
-        coverage_points = coverage_points.to(self.device).float()
-        gesture_frames = gesture_frames.to(self.device).float()
-
-        coverage_embedded = fk_model(ik_model(coverage_points))
-        gesture_joints = ik_model(gesture_frames)
-        gesture_embedded = fk_model(gesture_joints)
-
-        flatness_delta = torch.randn_like(gesture_frames) * flatness_sigma
-        embedded_positive = fk_model(ik_model(gesture_frames + flatness_delta))
-        embedded_negative = fk_model(ik_model(gesture_frames - flatness_delta))
-        curvature = ((embedded_positive + embedded_negative -
-                     2 * gesture_embedded) ** 2).mean()
-
-        selected = torch.randint(
-            robot_points.shape[1], (coverage_points.size(0),), device=self.device)
-        target = robot_points[:, selected].permute(1, 0, 2)
-        chamfer = sum(
-            chamfer_distance(coverage_embedded[:, i].unsqueeze(
-                0), target[:, i].unsqueeze(0))
-            for i in range(coverage_points.size(1))
-        )
-
-        direction_delta = torch.randn_like(gesture_frames) * direction_sigma
-        embedded_delta = fk_model(ik_model(gesture_frames + direction_delta))
-        d1 = direction_delta.reshape(-1, 3)
-        d2 = (embedded_delta - gesture_embedded).reshape(-1, 3)
-        direction = -(F.normalize(d1, dim=-1, eps=1e-5) *
-                      F.normalize(d2, dim=-1, eps=1e-5)).sum(-1).mean()
-        pinch = pinch_correspondence_loss(gesture_frames, gesture_embedded)
-        collision = collision_free_loss(collision_classifier(gesture_joints))
-        total = (
-            direction
-            + weights["w_chamfer"] * chamfer
-            + weights["w_curvature"] * curvature
-            + weights["w_pinch"] * pinch
-            + weights["w_collision"] * collision
-        )
-        return {
-            "total": total,
-            "direction": direction,
-            "chamfer": chamfer,
-            "curvature": curvature,
-            "pinch": pinch,
-            "collision": collision,
-        }
-
-    def _run_epoch(
-        self,
-        coverage_loader,
-        gesture_loader,
-        robot_points,
-        ik_model,
-        fk_model,
-        collision_classifier,
-        weights,
-        direction_sigma,
-        flatness_sigma,
-        optimizer=None,
-    ):
-        training = optimizer is not None
-        ik_model.train(training)
-        totals = {name: 0.0 for name in (
-            "total", "direction", "chamfer", "curvature", "pinch", "collision")}
-        gesture_iterator = iter(gesture_loader)
-
-        with nullcontext() if training else torch.no_grad():
-            for coverage_points in coverage_loader:
-                try:
-                    gesture_frames = next(gesture_iterator)
-                except StopIteration:
-                    gesture_iterator = iter(gesture_loader)
-                    gesture_frames = next(gesture_iterator)
-                losses = self._compute_losses(
-                    coverage_points,
-                    gesture_frames,
-                    robot_points,
-                    ik_model,
-                    fk_model,
-                    collision_classifier,
-                    weights,
-                    direction_sigma,
-                    flatness_sigma,
-                )
-                if training:
-                    optimizer.zero_grad()
-                    losses["total"].backward()
-                    optimizer.step()
-                for name, value in losses.items():
-                    totals[name] += value.item()
-
-        return {name: value / len(coverage_loader) for name, value in totals.items()}
 
     def train(
         self,
         human_data_path,
         tag="",
         epoch=50,
+        save_every=50,
         seed=0,
         val_fraction=0.1,
         resume=None,
@@ -549,36 +598,34 @@ class GeoRTTrainer:
             "coverage_samples": coverage_samples,
             "coverage_batch_size": coverage_batch_size,
             "gesture_batch_size": gesture_batch_size,
+            "save_every": save_every,
         }
         export_config["training"] = training_metadata
 
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         if resume is not None:
             resume_path = Path(resume)
-            save_dir = resume_path if resume_path.is_dir() else self.checkpoint_dir / \
-                resume_path
+            if resume_path.is_file():
+                save_dir = resume_path.parent
+                resume_checkpoint = resume_path
+            else:
+                save_dir = resume_path if resume_path.is_dir() else self.checkpoint_dir / \
+                    resume_path
+                resume_checkpoint = save_dir / "last.ckpt"
             if not save_dir.is_dir():
                 raise FileNotFoundError(
                     f"Resume experiment directory not found: {save_dir}")
             config_path = save_dir / "config.json"
-            state_path = save_dir / "training_state.pth"
-            fk_snapshot_path = save_dir / "fk_model.pth"
-            collision_snapshot_path = save_dir / "collision_model.pth"
             if not config_path.is_file():
                 raise FileNotFoundError(
                     f"Resume configuration not found: {config_path}")
             validate_resume_config(export_config, load_json(
                 config_path), training_metadata)
-            if not state_path.is_file():
+            if not resume_checkpoint.is_file():
                 raise FileNotFoundError(
-                    f"Training state not found: {state_path}")
-            if not fk_snapshot_path.is_file():
-                raise FileNotFoundError(
-                    f"FK model snapshot not found: {fk_snapshot_path}")
-            if not collision_snapshot_path.is_file():
-                raise FileNotFoundError(
-                    f"Collision model snapshot not found: {collision_snapshot_path}")
+                    f"Lightning checkpoint not found: {resume_checkpoint}")
         else:
+            resume_checkpoint = None
             suffix = f"_{tag}" if tag else ""
             save_dir = self.checkpoint_dir / \
                 f"{self.config['name']}_{generate_current_timestring()}{suffix}"
@@ -611,77 +658,56 @@ class GeoRTTrainer:
             gesture_batch_size=gesture_batch_size,
         ) if len(validation_frames) else None
 
-        if resume is not None:
-            fk_model = FKModel(keypoint_joints=self.get_keypoint_info()[
-                               "joint"]).to(self.device)
-            fk_model.load_state_dict(torch.load(
-                fk_snapshot_path, map_location=self.device, weights_only=True))
-            fk_model = _freeze_model(fk_model)
-            collision_classifier = CollisionClassifier(
-                len(lower)).to(self.device)
-            collision_classifier.load_state_dict(
-                torch.load(collision_snapshot_path,
-                           map_location=self.device, weights_only=True)
-            )
-            collision_classifier = _freeze_model(collision_classifier)
-        else:
-            fk_model = self.get_robot_neural_fk_model()
-            collision_classifier = self.get_collision_classifier()
-            torch.save(fk_model.state_dict(), save_dir / "fk_model.pth")
-            torch.save(collision_classifier.state_dict(),
-                       save_dir / "collision_model.pth")
-            set_seed(seed)
+        fk_model = self.get_robot_neural_fk_model()
+        collision_classifier = self.get_collision_classifier()
+        set_seed(seed)
         ik_model = IKModel(keypoint_joints=self.get_keypoint_info()[
                            "joint"]).to(self.device)
-        optimizer = optim.AdamW(ik_model.parameters(), lr=1e-4)
         robot_points = torch.as_tensor(
             self.get_robot_pointcloud(self.get_keypoint_info()["link"]), dtype=torch.float32, device=self.device
         )
-
-        if resume is not None:
-            start_epoch = load_training_state(
-                state_path, ik_model, optimizer, self.device)
-        else:
-            set_seed(seed)
-            start_epoch = 0
-
-        for current_epoch in range(start_epoch, epoch):
-            train_metrics = self._run_epoch(
-                train_coverage,
-                train_gestures,
-                robot_points,
-                ik_model,
-                fk_model,
-                collision_classifier,
-                weights,
-                direction_sigma,
-                flatness_sigma,
-                optimizer,
-            )
-            validation_metrics = None
-            if validation_streams is not None:
-                validation_metrics = self._run_epoch(
-                    *validation_streams,
-                    robot_points,
-                    ik_model,
-                    fk_model,
-                    collision_classifier,
-                    weights,
-                    direction_sigma,
-                    flatness_sigma,
-                )
-            append_metrics(
-                save_dir / "metrics.jsonl",
-                {"epoch": current_epoch, "train": train_metrics,
-                    "validation": validation_metrics},
-            )
-            torch.save(ik_model.state_dict(), save_dir /
-                       f"epoch_{current_epoch}.pth")
-            torch.save(ik_model.state_dict(), save_dir / "last.pth")
-            save_training_state(save_dir / "training_state.pth",
-                                ik_model, optimizer, current_epoch)
-            print(
-                f"Epoch {current_epoch} | train {format_loss(train_metrics['total'])}")
+        module = GeoRTLightningModule(
+            ik_model,
+            fk_model,
+            collision_classifier,
+            robot_points,
+            weights,
+            direction_sigma,
+            flatness_sigma,
+            seed,
+        )
+        train_loader = CombinedLoader(
+            {"coverage": train_coverage, "gesture": train_gestures},
+            mode="max_size_cycle",
+        )
+        validation_loader = CombinedLoader(
+            {"coverage": validation_streams[0],
+                "gesture": validation_streams[1]},
+            mode="max_size_cycle",
+        ) if validation_streams is not None else None
+        accelerator = "gpu" if self.device.type == "cuda" else self.device.type
+        devices = [
+            self.device.index] if self.device.type == "cuda" and self.device.index is not None else 1
+        lightning_trainer = Trainer(
+            accelerator=accelerator,
+            devices=devices,
+            max_epochs=epoch,
+            callbacks=build_checkpoint_callbacks(
+                save_dir, save_every, validation_streams is not None
+            ),
+            default_root_dir=save_dir,
+            deterministic=True,
+            enable_model_summary=False,
+            logger=CSVLogger(save_dir=save_dir, name="logs"),
+            log_every_n_steps=1,
+            num_sanity_val_steps=0,
+        )
+        lightning_trainer.fit(
+            module,
+            train_dataloaders=train_loader,
+            val_dataloaders=validation_loader,
+            ckpt_path=resume_checkpoint,
+        )
 
         return save_dir
 
@@ -699,6 +725,7 @@ def build_arg_parser():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--val-fraction", type=float, default=0.1)
     parser.add_argument("--epoch", type=int, default=50)
+    parser.add_argument("--save-every", type=int, default=50)
     parser.add_argument("--resume")
     parser.add_argument("--direction-sigma", type=float, default=0.005)
     parser.add_argument("--flatness-sigma", type=float, default=0.002)
@@ -742,6 +769,7 @@ if __name__ == '__main__':
         human_data_path,
         tag=args.tag,
         epoch=args.epoch,
+        save_every=args.save_every,
         seed=args.seed,
         val_fraction=args.val_fraction,
         resume=args.resume,

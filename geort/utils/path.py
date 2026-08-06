@@ -59,20 +59,40 @@ def _get_writable_root():
 
     source_root = get_package_root().parent
     if (source_root / ".git").exists():
-        return source_root
+        return source_root / ".geort"
 
-    data_home = os.environ.get("XDG_DATA_HOME")
-    if data_home:
-        return Path(data_home).expanduser() / "geort"
-    return Path.home() / ".local" / "share" / "geort"
+    return Path.cwd() / ".geort"
 
 
 def get_data_root():
     return _get_writable_root() / "data"
 
 
+def get_run_root():
+    return _get_writable_root() / "runs"
+
+
+def get_robot_cache_root(robot):
+    name = robot.get("name")
+    if not isinstance(name, str) or not name or Path(name).name != name:
+        raise ValueError("robot name must be a single path component")
+    fingerprint = robot.get("urdf_sha256")
+    if fingerprint:
+        if (
+            not isinstance(fingerprint, str)
+            or len(fingerprint) < 12
+            or any(
+                character not in "0123456789abcdef"
+                for character in fingerprint.lower()
+            )
+        ):
+            raise ValueError("urdf_sha256 must be a hexadecimal digest")
+        name = f"{name}-{fingerprint[:12].lower()}"
+    return _get_writable_root() / "cache" / name
+
+
 def get_checkpoint_root():
-    return _get_writable_root() / "checkpoint"
+    return get_run_root()
 
 
 def get_human_data_output_path(human_data):

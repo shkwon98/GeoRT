@@ -1,16 +1,17 @@
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+
+from geort.utils.path import get_run_root
 
 
 def create_run_dir(run_id=None, root=None):
     root = (
         Path(root)
         if root is not None
-        else Path(os.environ.get("GEORT_HOME", Path.cwd())) / "experiments"
+        else get_run_root()
     )
     run_id = run_id or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     run_dir = root / run_id
@@ -31,7 +32,8 @@ def _timestamps(values, frame_count):
         or not np.isfinite(timestamps).all()
         or np.any(np.diff(timestamps) < 0)
     ):
-        raise ValueError("timestamps must be finite, monotonic, and match frames")
+        raise ValueError(
+            "timestamps must be finite, monotonic, and match frames")
     return timestamps
 
 
@@ -77,7 +79,8 @@ def save_canonical_recording(run_dir, frames, metadata):
     hand_sides = {frame.hand_side for frame in frames}
     if len(hand_sides) != 1:
         raise ValueError("canonical frames must share one hand_side")
-    timestamps = _timestamps([frame.timestamp for frame in frames], len(frames))
+    timestamps = _timestamps(
+        [frame.timestamp for frame in frames], len(frames))
     points = np.stack([frame.points for frame in frames]).astype(np.float32)
     payload = {
         **metadata,

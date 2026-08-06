@@ -4,12 +4,18 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import torch
 from pathlib import Path
+
+import torch
+
 from geort.formatter import HandFormatter
 from geort.model import IKModel
+from geort.utils.config_utils import (
+    load_json,
+    parse_config_joint_limit,
+    parse_config_keypoint_info,
+)
 from geort.utils.path import get_checkpoint_root
-from geort.utils.config_utils import load_json, parse_config_keypoint_info, parse_config_joint_limit
 
 
 class GeoRTRetargetingModel:
@@ -35,8 +41,19 @@ class GeoRTRetargetingModel:
         self.human_ids = keypoint_info["human_id"]
         self.model = IKModel(
             keypoint_joints=keypoint_info["joint"]).to(self.device)
-        self.model.load_state_dict(torch.load(
-            model_path, map_location=self.device))
+        checkpoint = torch.load(
+            model_path, map_location=self.device, weights_only=True)
+        checkpoint_state = checkpoint.get("state_dict", checkpoint)
+        prefix = "ik_model."
+        state = {
+            key[len(prefix):]: value
+            for key, value in checkpoint_state.items()
+            if key.startswith(prefix)
+        }
+        if not state:
+            raise ValueError(
+                f"No IK model weights found in checkpoint: {model_path}")
+        self.model.load_state_dict(state)
         self.model.eval()
         # GeoRT will do normalization.
         self.qpos_normalizer = HandFormatter(
@@ -71,7 +88,13 @@ def load_model(tag_or_path, epoch=None, checkpoint_root=None, device=None):
         raise FileNotFoundError(
             f"Checkpoint directory not found: {checkpoint_dir}")
 
-    model_path = checkpoint_dir / \
-        ("last.pth" if epoch is None or epoch < 0 else f"epoch_{epoch}.pth")
+    if epoch is None:
+        model_path = checkpoint_dir / "best.ckpt"
+        if not model_path.is_file():
+            model_path = checkpoint_dir / "last.ckpt"
+    elif epoch < 0:
+        model_path = checkpoint_dir / "last.ckpt"
+    else:
+        model_path = checkpoint_dir / f"epoch={epoch:04d}.ckpt"
     config_path = checkpoint_dir / "config.json"
     return GeoRTRetargetingModel(model_path=model_path, config_path=config_path, device=device)

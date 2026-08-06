@@ -32,6 +32,17 @@ def _create_mocap(args):
     return ReplayMocap(args.data)
 
 
+def _apply_mocap_frame(result, model, hand, viewer, human_ids):
+    points = result["result"]
+    if result["status"] == "recording" and points is not None:
+        qpos = model.forward(points)
+        hand.set_qpos_target(qpos)
+        robot_points = hand.keypoint_from_qpos(qpos, ret_vec=True)
+        viewer.set_mocap_overlay(points, human_ids, robot_points)
+    else:
+        viewer.hide_mocap_overlay()
+
+
 def main(argv=None):
     args = parse_args(argv)
 
@@ -42,6 +53,12 @@ def main(argv=None):
     mocap = _create_mocap(args)
     config = get_config(args.hand)
     hand = HandKinematicModel.build_from_config(config, render=True)
+    tips = config["fingertip_link"]
+    hand.initialize_keypoint(
+        [tip["link"] for tip in tips],
+        [tip["center_offset"] for tip in tips],
+    )
+    human_ids = [tip["human_hand_id"] for tip in tips]
     viewer = hand.get_viewer_env()
     viewer_updates = 10 if args.mocap == "replay" else 1
 
@@ -51,8 +68,7 @@ def main(argv=None):
                 viewer.update()
 
             result = mocap.get()
-            if result["status"] == "recording" and result["result"] is not None:
-                hand.set_qpos_target(model.forward(result["result"]))
+            _apply_mocap_frame(result, model, hand, viewer, human_ids)
             if result["status"] == "quit":
                 break
     finally:

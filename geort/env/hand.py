@@ -7,9 +7,226 @@
 import numpy as np
 import sapien
 from sapien.utils import Viewer
+from sapien.utils.viewer.control_window import ControlWindow
+from sapien.utils.viewer.plugin import Plugin
+
 from geort.utils.config_utils import get_config
-from geort.utils.hand_utils import check_contact, get_entity_by_name, get_active_joints, get_active_joint_indices
+from geort.utils.hand_utils import (
+    check_contact,
+    get_active_joint_indices,
+    get_active_joints,
+    get_entity_by_name,
+)
 from geort.utils.path import resolve_resource_path
+
+_HAND_CONNECTIONS = (
+    (0, 1), (1, 2), (2, 3), (3, 4),
+    (0, 5), (5, 6), (6, 7), (7, 8),
+    (5, 9), (9, 10), (10, 11), (11, 12),
+    (9, 13), (13, 14), (14, 15), (15, 16),
+    (0, 17), (13, 17), (17, 18), (18, 19), (19, 20),
+)
+
+_CAMERA_ROTATION = np.array(
+    [0.363401, -0.3801039, 0.16556499, 0.83429549])
+_CONTROL_WIDTH = 400
+_VIEW_RESOLUTION = (1920, 1080)
+_VIEW_FOVY = 1.0
+
+
+def _make_render_body(scene, shape):
+    body = sapien.render.RenderBodyComponent()
+    body.attach(shape)
+    sapien.Entity().add_component(body).add_to_scene(scene)
+    return body
+
+
+def _set_segment(body, start, end):
+    start = np.asarray(start)
+    end = np.asarray(end)
+    direction = end - start
+    length = np.linalg.norm(direction)
+    if length < 1e-8:
+        body.disable()
+        return
+    body.entity.set_pose(sapien.Pose(
+        (start + end) / 2,
+        sapien.math.shortest_rotation([1, 0, 0], direction),
+    ))
+    body.enable()
+
+
+def _fit_camera_to_bounds(bounds):
+    """Fit a +X-forward SAPIEN camera to bounds shaped (N, 2, 3)."""
+    lower = bounds[:, 0].min(axis=0)
+    upper = bounds[:, 1].max(axis=0)
+    center = (lower + upper) / 2
+    radius = np.linalg.norm(upper - lower) / 2
+    rotation = _CAMERA_ROTATION
+    camera_axes = sapien.Pose(q=rotation).to_transformation_matrix()[:3, :3]
+    forward, left = camera_axes[:, :2].T
+    distance = 3 * radius
+    panel_offset = (
+        distance
+        * np.tan(_VIEW_FOVY / 2)
+        * _CONTROL_WIDTH
+        / _VIEW_RESOLUTION[1]
+    )
+    pose = sapien.Pose(
+        center - distance * forward + panel_offset * left, rotation
+    )
+    return pose, max(0.001, 0.1 * radius), max(1.0, 10 * radius)
+
+
+class MocapInset(Plugin):
+    def __init__(self):
+        self.scene = sapien.Scene([sapien.render.RenderSystem()])
+        self.scene.set_ambient_light([1, 1, 1])
+        cyan = sapien.render.RenderMaterial(
+            base_color=[0.05, 0.75, 1, 1], emission=[0.02, 0.3, 0.4, 1]
+        )
+        green = sapien.render.RenderMaterial(
+            base_color=[0.2, 1, 0.35, 1], emission=[0.08, 0.4, 0.14, 1]
+        )
+        white = sapien.render.RenderMaterial(
+            base_color=[1, 1, 1, 1], emission=[0.4, 0.4, 0.4, 1]
+        )
+        axis_materials = [
+            sapien.render.RenderMaterial(
+                base_color=color, emission=np.asarray(
+                    color) * [0.4, 0.4, 0.4, 1]
+            )
+            for color in (
+                [1, 0.2, 0.2, 1],
+                [0.2, 1, 0.2, 1],
+                [0.2, 0.4, 1, 1],
+            )
+        ]
+        primitive = sapien.render.RenderShapeCylinder(1, 1, cyan)
+        cylinder = (
+            primitive.vertices,
+            primitive.triangles,
+            primitive.vertex_normal,
+            primitive.vertex_uv,
+        )
+
+        self._cylinder = cylinder
+        self._bone_material = cyan
+        self._bones = [None] * len(_HAND_CONNECTIONS)
+        self._joints = [
+            _make_render_body(
+                self.scene, sapien.render.RenderShapeSphere(0.0025, cyan)
+            )
+            for _ in range(21)
+        ]
+        self._used = None
+        self._used_material = green
+        self._axes = [
+            self._make_segment(material, 0.025, 0.0012)
+            for material in axis_materials
+        ]
+        self._scale_bar = self._make_segment(white, 0.05, 0.0015)
+
+        self.camera = self.scene.add_camera(
+            "mocap", 640, 640, 1.0, 0.01, 2.0
+        )
+        self.camera.set_orthographic_parameters(0.01, 2.0, 0.14)
+        self.set_view(sapien.Pose(q=_CAMERA_ROTATION), sapien.Pose())
+        self.visible = False
+        self.ui_window = None
+        self.ui_picture = None
+
+    def _make_segment(self, material, length, radius):
+        shape = sapien.render.RenderShapeTriangleMesh(
+            *self._cylinder, material
+        )
+        shape.scale = [length / 2, radius, radius]
+        return _make_render_body(self.scene, shape)
+
+    def set_view(self, main_camera_pose, base_pose):
+        rotation = (base_pose.inv() * main_camera_pose).q
+        rotation_matrix = sapien.Pose(
+            q=rotation).to_transformation_matrix()[:3, :3]
+        forward, left, up = rotation_matrix.T
+        center = np.array([0, 0, 0.1])
+        self.camera.set_entity_pose(sapien.Pose(
+            center - 0.5 * forward, rotation
+        ))
+
+        axis_origin = center + 0.09 * left - 0.09 * up
+        for body, direction in zip(self._axes, np.eye(3) * 0.025):
+            _set_segment(body, axis_origin, axis_origin + direction)
+        bar_center = center - 0.075 * left - 0.11 * up
+        _set_segment(
+            self._scale_bar,
+            bar_center - 0.025 * left,
+            bar_center + 0.025 * left,
+        )
+
+    def set_points(self, human_points, human_ids):
+        human_points = np.asarray(human_points, dtype=np.float32)
+        human_ids = np.asarray(human_ids, dtype=np.int64)
+        for index, (start, end) in enumerate(_HAND_CONNECTIONS):
+            length = np.linalg.norm(human_points[end] - human_points[start])
+            if self._bones[index] is None and length >= 1e-8:
+                # ponytail: reuse first valid bone length; rebuild only if
+                # per-frame landmark scale changes become visually significant.
+                self._bones[index] = self._make_segment(
+                    self._bone_material, length, 0.0015
+                )
+            if self._bones[index] is not None:
+                _set_segment(
+                    self._bones[index], human_points[start], human_points[end]
+                )
+        for marker, point in zip(self._joints, human_points):
+            marker.entity.set_pose(sapien.Pose(point))
+            marker.enable()
+        if self._used is None:
+            self._used = [
+                _make_render_body(
+                    self.scene,
+                    sapien.render.RenderShapeSphere(
+                        0.004, self._used_material),
+                )
+                for _ in human_ids
+            ]
+        if len(self._used) != len(human_ids):
+            raise ValueError(
+                "human_ids cannot change after inset initialization")
+        for marker, point in zip(self._used, human_points[human_ids]):
+            marker.entity.set_pose(sapien.Pose(point))
+            marker.enable()
+        self.visible = True
+
+    def hide(self):
+        self.visible = False
+
+    def before_render(self):
+        if self.visible:
+            self.scene.update_render()
+            self.camera.take_picture()
+
+    def get_ui_windows(self):
+        if not self.visible:
+            return []
+        if self.ui_window is None:
+            from sapien import internal_renderer as R
+
+            self.ui_picture = R.UIPicture()
+            self.ui_window = (
+                R.UIWindow()
+                .Label("Mocap input")
+                .Size(340, 380)
+                .append(
+                    R.UIDisplayText().Text(
+                        "Matched view | fixed 280 mm | white = 50 mm"),
+                    self.ui_picture,
+                )
+            )
+        self.ui_window.Pos(10, 420)
+        self.ui_picture.Size(320, 320).Picture(
+            self.camera._internal_renderer, "Color")
+        return [self.ui_window]
 
 
 class HandKinematicModel:
@@ -203,20 +420,84 @@ class HandViewerEnv:
         scene.set_timestep(1 / 100.0)
         scene.set_ambient_light([0.5, 0.5, 0.5])
         scene.add_directional_light([0, 1, -1], [0.5, 0.5, 0.5], shadow=True)
-        scene.add_ground(altitude=0)
 
-        viewer = Viewer()
+        control_window = ControlWindow()
+        control_window.move_speed = 0.01
+        control_window.rotate_speed = 0.001
+        control_window.scroll_speed = 0.1
+        mocap_inset = MocapInset()
+        viewer = Viewer(plugins=[control_window, mocap_inset])
         viewer.set_scene(scene)
-        viewer.window.set_camera_position([0.1550926, -0.1623763, 0.7064089])
-        viewer.window.set_camera_rotation(
-            [0.8716827, 0.3260138, 0.12817779, 0.3427167])
-        viewer.window.set_camera_parameters(near=0.05, far=100, fovy=1)
+        scene.update_render()
+        bounds = np.array([
+            body.get_global_aabb_fast()
+            for body in scene.render_system.render_bodies
+        ])
+        camera_pose, near, far = _fit_camera_to_bounds(bounds)
+        viewer.set_camera_pose(camera_pose)
+        viewer.window.set_camera_parameters(near=near, far=far, fovy=1)
 
         self.model = model
         self.scene = scene
         self.viewer = viewer
+        self._mocap_inset = mocap_inset
+        self._robot_cloud = None
+
+    def set_mocap_overlay(self, human_points, human_ids, robot_points):
+        human_points = np.asarray(human_points, dtype=np.float32)
+        human_ids = np.asarray(human_ids, dtype=np.int64)
+        robot_points = np.asarray(robot_points, dtype=np.float32)
+        if human_points.shape != (21, 3) or not np.isfinite(human_points).all():
+            raise ValueError("human_points must be finite with shape (21, 3)")
+        if (
+            human_ids.ndim != 1
+            or len(human_ids) == 0
+            or np.any(human_ids < 0)
+            or np.any(human_ids >= len(human_points))
+        ):
+            raise ValueError("human_ids must contain valid landmark indices")
+        if (
+            robot_points.shape != (len(human_ids), 3)
+            or not np.isfinite(robot_points).all()
+        ):
+            raise ValueError("robot_points must be finite and match human_ids")
+
+        self._mocap_inset.set_points(human_points, human_ids)
+        if self._robot_cloud is None:
+            self._robot_cloud = sapien.render.RenderPointCloudComponent(
+                len(robot_points)
+            )
+            self._robot_cloud.set_attribute(
+                "color",
+                np.tile([1, 0.2, 0.8, 1], (len(robot_points), 1)).astype(
+                    np.float32
+                ),
+            )
+            self._robot_cloud.set_attribute(
+                "scale", np.full(len(robot_points), 0.004, dtype=np.float32)
+            )
+            sapien.Entity().add_component(
+                self._robot_cloud).add_to_scene(self.scene)
+        elif self._robot_cloud.get_vertices().shape != robot_points.shape:
+            raise ValueError(
+                "human_ids cannot change after overlay initialization")
+        self._robot_cloud.set_vertices(robot_points)
+        base_pose = self.model.hand.get_links()[
+            self.model.base_link_idx].get_entity_pose()
+        self._robot_cloud.entity.set_pose(base_pose)
+        self._robot_cloud.enable()
+
+    def hide_mocap_overlay(self):
+        if self._robot_cloud is not None:
+            self._robot_cloud.disable()
+        self._mocap_inset.hide()
 
     def update(self):
+        base_pose = self.model.hand.get_links()[
+            self.model.base_link_idx].get_entity_pose()
+        self._mocap_inset.set_view(
+            self.viewer.window.get_camera_pose(), base_pose
+        )
         self.scene.step()
         self.scene.update_render()
         self.viewer.render()

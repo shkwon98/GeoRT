@@ -3,7 +3,7 @@
 The experiment runner keeps mocap, method, and robot selection independent.
 Every mocap source is converted to the same 21-landmark canonical frame before
 GeoRT or DexPilot sees it. Generated runs live under
-`$GEORT_HOME/experiments/<run-id>`.
+`.geort/runs/<run-id>` by default.
 
 ## Environment
 
@@ -16,13 +16,12 @@ uv sync --all-extras
 For GeoRT-only experiments, `uv sync --extra training` is sufficient; add
 `--extra dexpilot` only when running that baseline.
 
-For Wuji experiments, point GeoRT at the existing read-only description:
+For Wuji experiments, source its ROS workspace and resolve the existing
+read-only description through the ROS package index:
 
 ```bash
-export GEORT_ROOT="$(git rev-parse --show-toplevel)"
-export GEORT_HOME=/path/to/geort-results
-export ROS2_WS=/path/to/ros2_ws
-export WUJI_HAND_DESCRIPTION="$ROS2_WS/src/robot/wuji_hand_ros2/wuji_hand_description"
+source /path/to/ros2_ws/install/setup.bash
+export WUJI_HAND_DESCRIPTION="$(ros2 pkg prefix --share wuji_hand_description)"
 ```
 
 The example calibration values are placeholders. Measure the rotation, scale,
@@ -43,13 +42,13 @@ The command prints the created run directory. Use that exact path below:
 
 ```bash
 uv run --locked --extra training python -m experiments.run train \
-  --run-dir "$GEORT_HOME/experiments/<run-id>"
+  --run-dir ".geort/runs/<run-id>"
 uv run --locked python -m experiments.run export \
-  --run-dir "$GEORT_HOME/experiments/<run-id>"
+  --run-dir ".geort/runs/<run-id>"
 uv run --locked python -m experiments.run infer \
-  --run-dir "$GEORT_HOME/experiments/<run-id>"
+  --run-dir ".geort/runs/<run-id>"
 uv run --locked --extra training python -m experiments.run evaluate \
-  --run-dir "$GEORT_HOME/experiments/<run-id>"
+  --run-dir ".geort/runs/<run-id>"
 ```
 
 `<run-id>` is explanatory text, not a shell default. Replace it with the
@@ -66,9 +65,9 @@ uv run --locked --extra dexpilot python -m experiments.run collect \
   --config experiments/configs/webxr_wuji_dexpilot.json \
   --input raw_webxr.npy
 uv run --locked --extra dexpilot python -m experiments.run infer \
-  --run-dir "$GEORT_HOME/experiments/<dexpilot-run-id>"
+  --run-dir ".geort/runs/<dexpilot-run-id>"
 uv run --locked --extra training python -m experiments.run evaluate \
-  --run-dir "$GEORT_HOME/experiments/<dexpilot-run-id>"
+  --run-dir ".geort/runs/<dexpilot-run-id>"
 ```
 
 ## Run artifacts
@@ -76,9 +75,12 @@ uv run --locked --extra training python -m experiments.run evaluate \
 - `config.json`, `robot.json`, `versions.json`: resolved experiment snapshot
 - `raw.npz`, `raw_metadata.json`: immutable device observations and calibration
 - `canonical.npy`, `canonical_metadata.json`: derived 21-point frames
-- `training.json`, `checkpoints/`: GeoRT training result
+- `training.json`, `checkpoints/`: Lightning checkpoints and versioned CSV logs
 - `model.ts`, `model.json`: SAPIEN-independent rollout model and metadata
 - `qpos.npz`, `latency.npy`, `metrics.json`: named output and common metrics
+
+Robot kinematics, collision data, and auxiliary FK/collision models are reused
+from `.geort/cache/<robot>-<URDF-hash>/`. They can be deleted and regenerated.
 
 Wuji rollout must start its existing launch with `start_retarget:=false`.
 Running Wuji's built-in retargeter and the GeoRT bridge together would create

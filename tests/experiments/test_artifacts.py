@@ -12,6 +12,15 @@ from experiments.artifacts import (
 from experiments.schema import CanonicalFrame, NamedCommand
 
 
+def test_default_run_directory_uses_runs_under_geort_home(tmp_path, monkeypatch):
+    root = tmp_path / ".geort"
+    monkeypatch.setenv("GEORT_HOME", str(root))
+
+    run = create_run_dir("run-a")
+
+    assert run == root / "runs" / "run-a"
+
+
 def test_artifacts_keep_raw_and_derived_data_separate(tmp_path):
     run = create_run_dir("run-a", root=tmp_path)
     raw = np.arange(2 * 25 * 3, dtype=np.float32).reshape(2, 25, 3)
@@ -41,6 +50,7 @@ def test_artifacts_keep_raw_and_derived_data_separate(tmp_path):
     assert canonical_path.name == "canonical.npy"
     assert command_path.name == "qpos.npz"
     np.testing.assert_array_equal(np.load(raw_path)["observations"], raw)
-    assert json.loads((run / "raw_metadata.json").read_text())["mocap"] == "webxr"
+    assert json.loads((run / "raw_metadata.json").read_text()
+                      )["mocap"] == "webxr"
     with pytest.raises(FileExistsError):
         save_raw_recording(run, raw, timestamps, {"mocap": "webxr"})

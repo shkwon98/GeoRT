@@ -14,9 +14,11 @@ def test_cli_exposes_complete_workflow_and_rejects_side_mismatch(tmp_path):
         ["collect", "--config", "x.json", "--input", "raw.npy"]
     ).command == "collect"
     assert parser.parse_args(["train", "--run-dir", "run"]).command == "train"
-    assert parser.parse_args(["export", "--run-dir", "run"]).command == "export"
+    assert parser.parse_args(
+        ["export", "--run-dir", "run"]).command == "export"
     assert parser.parse_args(["infer", "--run-dir", "run"]).command == "infer"
-    assert parser.parse_args(["evaluate", "--run-dir", "run"]).command == "evaluate"
+    assert parser.parse_args(
+        ["evaluate", "--run-dir", "run"]).command == "evaluate"
 
     path = tmp_path / "config.json"
     path.write_text(
@@ -111,7 +113,7 @@ def test_collect_infer_and_evaluate_create_complete_run(tmp_path, monkeypatch):
             "run-a",
         ]
     )
-    run_dir = tmp_path / "results" / "experiments" / "run-a"
+    run_dir = tmp_path / "results" / "runs" / "run-a"
     main(["infer", "--run-dir", str(run_dir)])
     main(["evaluate", "--run-dir", str(run_dir)])
 

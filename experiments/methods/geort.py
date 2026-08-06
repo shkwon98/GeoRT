@@ -4,8 +4,7 @@ from pathlib import Path
 
 import torch
 
-from experiments.schema import NamedCommand
-from experiments.schema import validate_calibration
+from experiments.schema import NamedCommand, validate_calibration
 from geort.export import load_model
 from geort.utils.config_utils import (
     load_json,
@@ -13,11 +12,11 @@ from geort.utils.config_utils import (
     parse_config_keypoint_info,
 )
 
-
 _OPTIONS = {
     "device",
     "tag",
     "epoch",
+    "save_every",
     "seed",
     "val_fraction",
     "coverage_samples",
@@ -38,7 +37,8 @@ class GeoRTMethod:
         self.joint_names = tuple(robot_spec["joint_order"])
         limits = self.model.qpos_normalizer.joint_lower_limit
         if len(self.joint_names) != len(limits):
-            raise ValueError("robot joint_order does not match the GeoRT checkpoint")
+            raise ValueError(
+                "robot joint_order does not match the GeoRT checkpoint")
 
     def infer(self, frame):
         if not frame.valid:
@@ -57,8 +57,10 @@ class _RolloutModel(torch.nn.Module):
         self.register_buffer(
             "human_ids", torch.tensor(human_ids, dtype=torch.long)
         )
-        self.register_buffer("lower", torch.as_tensor(lower, dtype=torch.float32))
-        self.register_buffer("upper", torch.as_tensor(upper, dtype=torch.float32))
+        self.register_buffer("lower", torch.as_tensor(
+            lower, dtype=torch.float32))
+        self.register_buffer("upper", torch.as_tensor(
+            upper, dtype=torch.float32))
 
     def forward(self, points):
         selected = torch.index_select(points, 0, self.human_ids).unsqueeze(0)
@@ -78,11 +80,13 @@ def export_torchscript(
     if config.get("name") != robot_spec.get("name"):
         raise ValueError("checkpoint robot does not match robot specification")
     if config.get("joint_order") != robot_spec.get("joint_order"):
-        raise ValueError("checkpoint joint names do not match robot specification")
+        raise ValueError(
+            "checkpoint joint names do not match robot specification")
     if config.get("hand_side", robot_spec.get("hand_side")) != robot_spec.get(
         "hand_side"
     ):
-        raise ValueError("checkpoint hand side does not match robot specification")
+        raise ValueError(
+            "checkpoint hand side does not match robot specification")
 
     calibration = experiment.get("calibration", {})
     scale, rotation, outward_sign = validate_calibration(
@@ -145,12 +149,12 @@ def train(canonical_path, robot_spec, run_dir, options):
     trainer = GeoRTTrainer(
         robot_spec,
         device=options.get("device"),
-        data_dir=run_dir / "robot_data",
         checkpoint_dir=run_dir / "checkpoints",
     )
     train_options = {
         "tag": options.get("tag", "geort"),
         "epoch": int(options.get("epoch", 50)),
+        "save_every": int(options.get("save_every", 50)),
         "seed": int(options.get("seed", 0)),
         "val_fraction": float(options.get("val_fraction", 0.1)),
         "coverage_samples": int(options.get("coverage_samples", 20000)),

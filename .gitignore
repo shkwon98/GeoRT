@@ -11,10 +11,8 @@ dist/
 .vscode/
 .superpowers/
 
-# Generated experiment data and checkpoints. Existing tracked examples stay tracked.
-data/*.npy
-data/*.npz
-checkpoint/*
+# Local datasets, robot caches, checkpoints, and experiment runs.
+/.geort/
 
 # Local review and planning notes; never stage these.
 docs/project-analysis.md

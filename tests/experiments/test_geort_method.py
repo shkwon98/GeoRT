@@ -59,6 +59,7 @@ def test_train_forwards_robot_and_size_options(tmp_path, monkeypatch):
             "coverage_samples": 64,
             "coverage_batch_size": 8,
             "gesture_batch_size": 4,
+            "save_every": 7,
             "epoch": 1,
         },
     )
@@ -68,6 +69,7 @@ def test_train_forwards_robot_and_size_options(tmp_path, monkeypatch):
     assert calls["train"]["coverage_samples"] == 64
     assert calls["train"]["coverage_batch_size"] == 8
     assert calls["train"]["gesture_batch_size"] == 4
+    assert calls["train"]["save_every"] == 7
 
 
 def test_train_rejects_unknown_options(tmp_path):
@@ -103,7 +105,10 @@ def _write_checkpoint(tmp_path):
     state = IKModel([[0], [1]]).state_dict()
     for value in state.values():
         value.zero_()
-    torch.save(state, checkpoint / "last.pth")
+    torch.save(
+        {"state_dict": {f"ik_model.{key}": value for key, value in state.items()}},
+        checkpoint / "last.ckpt",
+    )
     return checkpoint
 
 

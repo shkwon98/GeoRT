@@ -4,6 +4,7 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+import os
 import random
 from contextlib import contextmanager
 from datetime import datetime
@@ -37,6 +38,9 @@ from geort.utils.path import (
     get_human_data,
     get_robot_cache_root,
 )
+
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
 
 PAPER_DEFAULTS = {
     "w_chamfer": 80.0,

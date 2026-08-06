@@ -1,5 +1,6 @@
 import importlib
 import json
+import os
 import random
 import sys
 from types import SimpleNamespace
@@ -10,7 +11,6 @@ import torch
 from lightning import LightningModule, Trainer
 from lightning.pytorch.utilities.combined_loader import CombinedLoader
 from torch.utils.data import DataLoader, TensorDataset
-
 
 pytestmark = [
     pytest.mark.filterwarnings("ignore:GPU available but not used.*"),
@@ -25,10 +25,12 @@ pytestmark = [
 
 def test_trainer_imports_without_sapien(monkeypatch):
     sys.modules.pop("geort.trainer", None)
+    monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
     monkeypatch.setitem(sys.modules, "sapien", None)
     monkeypatch.setitem(sys.modules, "sapien.core", None)
 
     assert importlib.import_module("geort.trainer")
+    assert os.environ["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
 
 
 def test_paper_defaults_and_frame_split_are_deterministic():

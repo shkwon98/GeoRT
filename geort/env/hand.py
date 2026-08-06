@@ -480,7 +480,8 @@ class HandViewerEnv:
             raise ValueError("robot_points must be finite and match human_ids")
 
         self._mocap_inset.set_points(human_points, human_ids)
-        if self._robot_cloud is None:
+        first_frame = self._robot_cloud is None
+        if first_frame:
             self._robot_cloud = sapien.render.RenderPointCloudComponent(
                 len(robot_points)
             )
@@ -493,12 +494,13 @@ class HandViewerEnv:
             self._robot_cloud.set_attribute(
                 "scale", np.full(len(robot_points), 0.004, dtype=np.float32)
             )
-            sapien.Entity().add_component(
-                self._robot_cloud).add_to_scene(self.scene)
         elif self._robot_cloud.get_vertices().shape != robot_points.shape:
             raise ValueError(
                 "human_ids cannot change after overlay initialization")
         self._robot_cloud.set_vertices(robot_points)
+        if first_frame:
+            sapien.Entity().add_component(
+                self._robot_cloud).add_to_scene(self.scene)
         base_pose = self.model.hand.get_links()[
             self.model.base_link_idx].get_entity_pose()
         self._robot_cloud.entity.set_pose(base_pose)

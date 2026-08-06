@@ -46,7 +46,8 @@ def test_mocap_overlay_uses_hand_base_frame():
     viewer._mocap_inset = hand.MocapInset()
     viewer._robot_cloud = None
     human_points = np.arange(63, dtype=np.float32).reshape(21, 3) / 100
-    robot_points = np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]], dtype=np.float32)
+    robot_points = np.array(
+        [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]], dtype=np.float32)
 
     viewer.set_mocap_overlay(human_points, [4, 8], robot_points)
 
@@ -63,6 +64,36 @@ def test_mocap_overlay_uses_hand_base_frame():
     np.testing.assert_allclose(robot.get_vertices(), robot_points)
     np.testing.assert_allclose(robot.entity.pose.p, base_pose.p)
     np.testing.assert_allclose(robot.entity.pose.q, base_pose.q)
+
+
+def test_robot_fingertips_render_on_first_frame():
+    scene = sapien.Scene([sapien.render.RenderSystem()])
+    camera = scene.add_camera("test", 128, 128, 1.0, 0.01, 1.0)
+    camera.set_entity_pose(sapien.Pose())
+    link = SimpleNamespace(get_entity_pose=sapien.Pose)
+    viewer = hand.HandViewerEnv.__new__(hand.HandViewerEnv)
+    viewer.model = SimpleNamespace(
+        hand=SimpleNamespace(get_links=lambda: [link]),
+        base_link_idx=0,
+    )
+    viewer.scene = scene
+    viewer._mocap_inset = SimpleNamespace(set_points=lambda *_: None)
+    viewer._robot_cloud = None
+
+    viewer.set_mocap_overlay(
+        np.zeros((21, 3), dtype=np.float32),
+        [4],
+        np.array([[0.2, 0, 0]], dtype=np.float32),
+    )
+    scene.update_render()
+    camera.take_picture()
+    rgb = camera.get_picture("Color")[..., :3]
+
+    assert np.any(
+        (rgb[..., 0] > 0.9)
+        & (rgb[..., 1] < 0.4)
+        & (rgb[..., 2] > 0.7)
+    )
 
 
 def test_mocap_bones_are_smooth_meshes_between_landmarks():

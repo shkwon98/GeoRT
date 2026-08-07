@@ -1,6 +1,6 @@
 {
-    "README!!": "Use this file as a complete hand config example. Remove this field in your own config.",
     "name": "allegro_left",
+    "hand_side": "left",
     "urdf_path": "./assets/allegro_left/allegro_hand_left.urdf",
     "base_link": "base_link",
     "joint_order": [

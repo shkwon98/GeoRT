@@ -4,36 +4,23 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import json
-from geort.utils.path import get_package_root
 from pathlib import Path
+
+import json
 import numpy as np
+
+from geort.utils.path import get_package_root
 
 
 def save_json(data, filename):
-    """
-    Save a Python dictionary to a JSON file.
-
-    Parameters:
-    - data (dict): The data to be saved.
-    - filename (str): Path to the file where data will be saved.
-    """
-    with open(filename, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=4)
+    Path(filename).write_text(
+        json.dumps(data, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def load_json(filename):
-    """
-    Load data from a JSON file into a Python dictionary.
-
-    Parameters:
-    - filename (str): Path to the JSON file to be loaded.
-
-    Returns:
-    - dict: The loaded data.
-    """
-    with open(filename, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    return json.loads(Path(filename).read_text(encoding="utf-8"))
 
 
 def get_config(name_or_path):

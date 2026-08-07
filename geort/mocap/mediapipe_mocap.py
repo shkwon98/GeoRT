@@ -5,13 +5,6 @@
 # LICENSE file in the root directory of this source tree.
 
 import numpy as np
-import mediapipe as mp
-from mediapipe import solutions
-from mediapipe.framework.formats import landmark_pb2
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
-import cv2
-from geort.mocap.camera.realsense import RealSenseCamera
 from geort.utils.path import get_hand_landmarker_path
 
 
@@ -98,6 +91,17 @@ class MediaPipeHandDetector:
     HANDEDNESS_TEXT_COLOR = (88, 205, 54)  # vibrant green
 
     def __init__(self):
+        import cv2
+        import mediapipe as mp
+        from mediapipe import solutions
+        from mediapipe.framework.formats import landmark_pb2
+        from mediapipe.tasks import python
+        from mediapipe.tasks.python import vision
+
+        self.cv2 = cv2
+        self.mp = mp
+        self.solutions = solutions
+        self.landmark_pb2 = landmark_pb2
         base_options = python.BaseOptions(
             model_asset_path=str(get_hand_landmarker_path()))
         options = vision.HandLandmarkerOptions(base_options=base_options,
@@ -118,16 +122,16 @@ class MediaPipeHandDetector:
             handedness = handedness_list[idx]
 
             # Draw the hand landmarks.
-            hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
+            hand_landmarks_proto = self.landmark_pb2.NormalizedLandmarkList()
             hand_landmarks_proto.landmark.extend([
-                landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in hand_landmarks
+                self.landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in hand_landmarks
             ])
-            solutions.drawing_utils.draw_landmarks(
+            self.solutions.drawing_utils.draw_landmarks(
                 annotated_image,
                 hand_landmarks_proto,
-                solutions.hands.HAND_CONNECTIONS,
-                solutions.drawing_styles.get_default_hand_landmarks_style(),
-                solutions.drawing_styles.get_default_hand_connections_style())
+                self.solutions.hands.HAND_CONNECTIONS,
+                self.solutions.drawing_styles.get_default_hand_landmarks_style(),
+                self.solutions.drawing_styles.get_default_hand_connections_style())
 
             # Get the top left corner of the detected hand's bounding box.
             height, width, _ = annotated_image.shape
@@ -138,42 +142,46 @@ class MediaPipeHandDetector:
                 MediaPipeHandDetector.MARGIN
 
             # Draw handedness (left or right hand) on the image.
-            cv2.putText(annotated_image, f"{handedness[0].category_name}",
-                        (text_x, text_y), cv2.FONT_HERSHEY_DUPLEX,
+            self.cv2.putText(annotated_image, f"{handedness[0].category_name}",
+                        (text_x, text_y), self.cv2.FONT_HERSHEY_DUPLEX,
                         MediaPipeHandDetector.FONT_SIZE,
                         MediaPipeHandDetector.HANDEDNESS_TEXT_COLOR,
                         MediaPipeHandDetector.FONT_THICKNESS,
-                        cv2.LINE_AA)
+                        self.cv2.LINE_AA)
 
         return annotated_image
 
     def numpy_to_mp_image(self, image_np):
-        image_np = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+        image_np = self.cv2.cvtColor(image_np, self.cv2.COLOR_RGB2BGR)
         # Create a MediaPipe image
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_np)
+        mp_image = self.mp.Image(
+            image_format=self.mp.ImageFormat.SRGB, data=image_np
+        )
         return mp_image
 
-    def detect(self, rgb_image):
+    def detect(self, rgb_image, hand_side):
         detection_result = self.detector.detect(
             self.numpy_to_mp_image(rgb_image))
-
-        hand_landmarks = detection_result.hand_landmarks
-        hand_world_landmarks = detection_result.hand_world_landmarks
 
         detected = False
         coordinates = []
         world_coordinates = []
         canonical_coordinates = []
+        selected = next(
+            (
+                index
+                for index, handedness in enumerate(detection_result.handedness)
+                if handedness[0].category_name.lower() == hand_side
+            ),
+            None,
+        )
 
-        if len(hand_landmarks) > 0:
-            hand_landmarks = hand_landmarks[0]
+        if selected is not None:
+            hand_landmarks = detection_result.hand_landmarks[selected]
             for landmark in hand_landmarks:
                 coordinates.append([landmark.x, landmark.y, landmark.z])
-
             detected = True
-
-        if len(hand_world_landmarks) > 0:
-            world_landmarks = hand_world_landmarks[0]
+            world_landmarks = detection_result.hand_world_landmarks[selected]
             for landmark in world_landmarks:
                 world_coordinates.append([landmark.x, landmark.y, landmark.z])
         annotated_image = self.draw_landmarks_on_image(
@@ -194,9 +202,24 @@ class MediaPipeHandDetector:
 
 
 class MediaPipeMocap:
-    def __init__(self):
-        self.camera = RealSenseCamera()
+    def __init__(self, camera="realsense", device_index=0, hand_side="right"):
+        import cv2
+
+        if hand_side not in {"left", "right"}:
+            raise ValueError("hand_side must be 'left' or 'right'")
+        if camera == "realsense":
+            from geort.mocap.camera.realsense import RealSenseCamera
+
+            self.camera = RealSenseCamera()
+        elif camera == "webcam":
+            from geort.mocap.camera.webcam import WebcamCamera
+
+            self.camera = WebcamCamera(device_index)
+        else:
+            raise ValueError("camera must be 'realsense' or 'webcam'")
+        self.cv2 = cv2
         self.detector = MediaPipeHandDetector()
+        self.hand_side = hand_side
         self.status = 'idle'
 
     def get(self):
@@ -204,13 +227,13 @@ class MediaPipeMocap:
         rgb = self.camera.get_frame()["rgb"]
         if rgb is None:
             return {"status": self.status, "result": None}
-        result = self.detector.detect(rgb)
+        result = self.detector.detect(rgb, self.hand_side)
 
         # Show the live detection.
-        cv2.imshow("detection", result["annotated_img"])
+        self.cv2.imshow("detection", result["annotated_img"])
 
         # Keyboard Control.
-        key = cv2.waitKey(1) & 0xFF
+        key = self.cv2.waitKey(1) & 0xFF
 
         if key == ord('q'):
             self.status = 'quit'
@@ -220,52 +243,10 @@ class MediaPipeMocap:
             self.status = 'idle'
 
         detection = None
-        if result["detected"]:
-            detection = result["canonical_coordinates"]
+        if result["detected"] and len(result["world_coordinates"]) == 21:
+            detection = result["world_coordinates"]
         return {'status': self.status, "result": detection}
 
-
-if __name__ == '__main__':
-    # A Naive Mocap System
-    # - DO NOT use this for arm-hand teleop!
-    # -- very unstable during wrist movement.
-    # -- significant hand scale shift during deployment, even optimization cannot save it.
-
-    # Usage:
-    # Step 1. Execute this script.
-    #         $ python ./geort/mocap/mediapipe_mocap.py --name [YOUR_DATASET_NAME]
-    # Step 2. Set the window focus on the pop-up camera view.
-    # Step 3. Press "s" to start recording, "e" to pause recording, and "q" to finish.
-    #         Hint: move your hand to the center of camera view and press "s" to start.
-    #               you will see the terminal start to print current status.
-    # Step 4. Now you can train your GeoRT model with your collected [YOUR_DATASET_NAME] data.
-
-    import argparse
-    import geort
-
-    parser = argparse.ArgumentParser()
-    # the data package name.
-    parser.add_argument('--name', default='human1', type=str)
-    args = parser.parse_args()
-
-    dataset_name = args.name
-
-    # Mocap System.
-    mocap = MediaPipeMocap()
-
-    # Data Collection Loop.
-    all_results = []
-
-    while True:
-        result = mocap.get()
-
-        if result['status'] == 'recording' and result["result"] is not None:
-            all_results.append(result["result"])
-            print("Data collected:", len(all_results))
-
-        if result['status'] == 'quit':
-            break
-
-    # Save!
-    save_path = geort.save_human_data(np.array(all_results), args.name)
-    print("Data saved to", save_path)
+    def close(self):
+        self.camera.release()
+        self.cv2.destroyAllWindows()

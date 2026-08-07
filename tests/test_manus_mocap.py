@@ -44,6 +44,7 @@ def test_manus_mocap_polls_ros_and_returns_copied_keypoints():
     mocap = ManusMocap.__new__(ManusMocap)
     mocap._executor = Executor()
     mocap._latest_data = None
+    mocap._new_data = False
 
     assert mocap.get() == {"result": None, "status": "no data"}
 
@@ -51,9 +52,12 @@ def test_manus_mocap_polls_ros_and_returns_copied_keypoints():
     mocap._on_quaternions(message)
     first = mocap.get()
     first["result"][0, 0] = 1.0
+    stale = mocap.get()
+    mocap._on_quaternions(message)
     second = mocap.get()
 
     assert first["status"] == "recording"
+    assert stale == {"result": None, "status": "no data"}
     assert second["result"].shape == (21, 3)
     assert second["result"][0, 0] == 0.0
-    assert mocap._executor.calls == 3
+    assert mocap._executor.calls == 4

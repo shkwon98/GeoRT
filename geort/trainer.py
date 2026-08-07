@@ -4,10 +4,10 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+import hashlib
 import os
 import random
 from contextlib import contextmanager
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -17,7 +17,6 @@ import torch.nn.functional as F
 import torch.optim as optim
 from lightning import LightningModule, Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint
-from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.utilities.combined_loader import CombinedLoader
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -31,11 +30,9 @@ from geort.dataset import (
 from geort.formatter import HandFormatter
 from geort.loss import chamfer_distance, collision_free_loss, pinch_correspondence_loss
 from geort.model import CollisionClassifier, FKModel, IKModel
-from geort.utils.config_utils import get_config, load_json, save_json
+from geort.utils.config_utils import load_json, save_json
 from geort.utils.path import (
     get_bundled_fk_checkpoint,
-    get_checkpoint_root,
-    get_human_data,
     get_robot_cache_root,
 )
 
@@ -49,7 +46,7 @@ PAPER_DEFAULTS = {
     "w_collision": 1e-4,
 }
 
-RESUME_HAND_KEYS = ("name", "urdf_path", "base_link",
+RESUME_HAND_KEYS = ("name", "robot_fingerprint", "base_link",
                     "joint_order", "fingertip_link", "joint",
                     "collision_ignore_pairs")
 
@@ -190,11 +187,13 @@ def get_float_list_from_np(np_vector):
     return float_list
 
 
-def generate_current_timestring():
-    """
-        Utility Function. Generate a current timestring in the format 'YYYY-MM-DD_HH-MM-SS'.
-    """
-    return datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+def _training_config_path(checkpoint_dir):
+    checkpoint_dir = Path(checkpoint_dir)
+    return (
+        checkpoint_dir.parent / "config.json"
+        if checkpoint_dir.name == "checkpoints"
+        else checkpoint_dir / "config.json"
+    )
 
 
 class GeoRTLightningModule(LightningModule):
@@ -320,6 +319,8 @@ class GeoRTLightningModule(LightningModule):
 
 class GeoRTTrainer:
     def __init__(self, config, device=None, data_dir=None, checkpoint_dir=None):
+        if checkpoint_dir is None:
+            raise ValueError("checkpoint_dir is required; use `geort train`")
         from geort.env.hand import HandKinematicModel
 
         self.config = config
@@ -328,8 +329,7 @@ class GeoRTTrainer:
         self.data_dir = Path(
             data_dir
         ) if data_dir is not None else get_robot_cache_root(self.config)
-        self.checkpoint_dir = Path(
-            checkpoint_dir) if checkpoint_dir is not None else Path(get_checkpoint_root())
+        self.checkpoint_dir = Path(checkpoint_dir)
         self.hand = HandKinematicModel.build_from_config(self.config)
 
     def get_robot_pointcloud(self, keypoint_names):
@@ -343,7 +343,7 @@ class GeoRTTrainer:
         '''
             Utility getter function. Return the robot kinematics dataset
         '''
-        dataset_path = self.get_robot_kinematics_dataset_path(postfix=True)
+        dataset_path = self.get_robot_kinematics_dataset_path()
         if not dataset_path.exists():
             self.generate_robot_kinematics_dataset(n_total=100000, save=True)
 
@@ -353,13 +353,11 @@ class GeoRTTrainer:
             dataset_path, keypoint_names=keypoint_names)
         return kinematics_dataset
 
-    def get_robot_kinematics_dataset_path(self, postfix=False):
+    def get_robot_kinematics_dataset_path(self):
         '''
             Utility getter function. Return the path to the robot kinematics dataset.
         '''
-        data_name = self.config["name"]
-
-        return self.data_dir / (f"{data_name}.npz" if postfix else data_name)
+        return self.data_dir / "kinematics.npz"
 
     def get_keypoint_info(self):
         keypoint_links = []
@@ -427,9 +425,8 @@ class GeoRTTrainer:
         return dataset
 
     def get_fk_checkpoint_path(self):
-        name = self.config["name"]
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        return self.data_dir / f"fk_model_{name}.pth"
+        return self.data_dir / "fk.pth"
 
     def get_robot_neural_fk_model(self, force_train=False):
         '''
@@ -490,7 +487,7 @@ class GeoRTTrainer:
         return _freeze_model(fk_model)
 
     def get_collision_dataset_path(self):
-        return self.data_dir / f"{self.config['name']}_collision.npz"
+        return self.data_dir / "collisions.npz"
 
     def generate_collision_dataset(self, save=True):
         qpos = self.get_robot_kinematics_dataset().qpos.astype(np.float32)
@@ -510,7 +507,7 @@ class GeoRTTrainer:
 
     def get_collision_checkpoint_path(self):
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        return self.data_dir / f"collision_model_{self.config['name']}.pth"
+        return self.data_dir / "collision.pth"
 
     def get_collision_classifier(self, force_train=False):
         lower, upper = self.hand.get_joint_limit()
@@ -573,7 +570,6 @@ class GeoRTTrainer:
     def train(
         self,
         human_data_path,
-        tag="",
         epoch=50,
         save_every=50,
         seed=0,
@@ -588,13 +584,24 @@ class GeoRTTrainer:
     ):
         weights = {name: loss_weights.get(name, default)
                    for name, default in PAPER_DEFAULTS.items()}
-        human_data_path = Path(human_data_path).resolve()
+        if isinstance(human_data_path, (str, os.PathLike)):
+            human_data_path = Path(human_data_path).resolve()
+            human_raw = np.load(human_data_path)
+            human_digest = hashlib.sha256(human_data_path.read_bytes()).hexdigest()
+        else:
+            human_raw = np.asarray(human_data_path)
+            human_digest = hashlib.sha256(
+                human_raw.dtype.str.encode()
+                + np.asarray(human_raw.shape, dtype=np.int64).tobytes()
+                + np.ascontiguousarray(human_raw).tobytes()
+            ).hexdigest()
         lower, upper = self.hand.get_joint_limit()
         export_config = self.config.copy()
+        export_config.pop("urdf_path", None)
         export_config["joint"] = {"lower": get_float_list_from_np(
             lower), "upper": get_float_list_from_np(upper)}
         training_metadata = {
-            "human_data": str(human_data_path),
+            "human_data_sha256": human_digest,
             "seed": seed,
             "val_fraction": val_fraction,
             **weights,
@@ -620,7 +627,7 @@ class GeoRTTrainer:
             if not save_dir.is_dir():
                 raise FileNotFoundError(
                     f"Resume experiment directory not found: {save_dir}")
-            config_path = save_dir / "config.json"
+            config_path = _training_config_path(save_dir)
             if not config_path.is_file():
                 raise FileNotFoundError(
                     f"Resume configuration not found: {config_path}")
@@ -631,14 +638,14 @@ class GeoRTTrainer:
                     f"Lightning checkpoint not found: {resume_checkpoint}")
         else:
             resume_checkpoint = None
-            suffix = f"_{tag}" if tag else ""
-            save_dir = self.checkpoint_dir / \
-                f"{self.config['name']}_{generate_current_timestring()}{suffix}"
-            save_dir.mkdir(parents=True)
-            save_json(export_config, save_dir / "config.json")
+            save_dir = self.checkpoint_dir
+            save_dir.mkdir(parents=True, exist_ok=True)
+            config_path = _training_config_path(save_dir)
+            if config_path.is_file():
+                export_config = {**load_json(config_path), **export_config}
+            save_json(export_config, config_path)
 
         set_seed(seed)
-        human_raw = np.load(human_data_path)
         human_ids = self.get_keypoint_info()["human_id"]
         if human_raw.ndim != 3 or human_raw.shape[-1] < 3 or max(human_ids) >= human_raw.shape[1]:
             raise ValueError(
@@ -703,7 +710,7 @@ class GeoRTTrainer:
             default_root_dir=save_dir,
             deterministic=True,
             enable_model_summary=False,
-            logger=CSVLogger(save_dir=save_dir, name="logs"),
+            logger=False,
             log_every_n_steps=1,
             num_sanity_val_steps=0,
         )
@@ -715,76 +722,3 @@ class GeoRTTrainer:
         )
 
         return save_dir
-
-
-def build_arg_parser():
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-hand", "--hand", default="allegro_right")
-    parser.add_argument("-human_data", "--human-data", default="human")
-    parser.add_argument("-ckpt_tag", "--tag", default="")
-    parser.add_argument("--device")
-    parser.add_argument("--data-dir")
-    parser.add_argument("--checkpoint-dir")
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--val-fraction", type=float, default=0.1)
-    parser.add_argument("--epoch", type=int, default=50)
-    parser.add_argument("--save-every", type=int, default=50)
-    parser.add_argument("--resume")
-    parser.add_argument("--direction-sigma", type=float, default=0.005)
-    parser.add_argument("--flatness-sigma", type=float, default=0.002)
-    parser.add_argument("--coverage-samples", type=int, default=20000)
-    parser.add_argument("--coverage-batch-size", type=int, default=2048)
-    parser.add_argument("--gesture-batch-size", type=int, default=2048)
-    for name, default in PAPER_DEFAULTS.items():
-        parser.add_argument(f"--{name.replace('_', '-')}",
-                            f"--{name}", dest=name, type=float, default=default)
-    return parser
-
-
-def _resolve_human_data(name_or_path, data_dir=None):
-    path = Path(name_or_path)
-    if path.is_file():
-        return path
-    if data_dir is not None:
-        path = Path(data_dir) / path
-        if not path.suffix:
-            path = path.with_suffix(".npy")
-        if path.is_file():
-            return path
-        raise FileNotFoundError(f"Human data file not found: {path}")
-    return get_human_data(name_or_path)
-
-
-if __name__ == '__main__':
-    args = build_arg_parser().parse_args()
-
-    config = get_config(args.hand)
-    trainer = GeoRTTrainer(
-        config,
-        device=args.device,
-        data_dir=args.data_dir,
-        checkpoint_dir=args.checkpoint_dir,
-    )
-
-    human_data_path = _resolve_human_data(args.human_data, args.data_dir)
-    print("Training with human data:", human_data_path.as_posix())
-    trainer.train(
-        human_data_path,
-        tag=args.tag,
-        epoch=args.epoch,
-        save_every=args.save_every,
-        seed=args.seed,
-        val_fraction=args.val_fraction,
-        resume=args.resume,
-        direction_sigma=args.direction_sigma,
-        flatness_sigma=args.flatness_sigma,
-        coverage_samples=args.coverage_samples,
-        coverage_batch_size=args.coverage_batch_size,
-        gesture_batch_size=args.gesture_batch_size,
-        w_chamfer=args.w_chamfer,
-        w_curvature=args.w_curvature,
-        w_collision=args.w_collision,
-        w_pinch=args.w_pinch,
-    )

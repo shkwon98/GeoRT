@@ -1,1 +1,0 @@
-"""Retargeting method adapters."""

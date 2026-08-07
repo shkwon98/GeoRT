@@ -105,7 +105,7 @@ def test_trainer_separates_robot_cache_from_run_checkpoints(tmp_path, monkeypatc
         "build_from_config",
         lambda config: object(),
     )
-    robot = {"name": "wuji_right", "urdf_sha256": "a" * 64}
+    robot = {"name": "wuji_right", "robot_fingerprint": "a" * 64}
     checkpoint_dir = tmp_path / "run" / "checkpoints"
 
     trainer = GeoRTTrainer(robot, device="cpu", checkpoint_dir=checkpoint_dir)
@@ -113,21 +113,32 @@ def test_trainer_separates_robot_cache_from_run_checkpoints(tmp_path, monkeypatc
     cache_dir = tmp_path / ".geort" / "cache" / f"wuji_right-{'a' * 12}"
     assert trainer.data_dir == cache_dir
     assert trainer.checkpoint_dir == checkpoint_dir
-    assert trainer.get_fk_checkpoint_path() == (
-        cache_dir / "fk_model_wuji_right.pth"
+    assert trainer.get_robot_kinematics_dataset_path() == (
+        cache_dir / "kinematics.npz"
     )
+    assert trainer.get_fk_checkpoint_path() == cache_dir / "fk.pth"
     get_collision_checkpoint_path = getattr(
         trainer, "get_collision_checkpoint_path", lambda: None
     )
-    assert get_collision_checkpoint_path() == (
-        cache_dir / "collision_model_wuji_right.pth"
-    )
+    assert trainer.get_collision_dataset_path() == cache_dir / "collisions.npz"
+    assert get_collision_checkpoint_path() == cache_dir / "collision.pth"
+
+
+def test_trainer_requires_run_checkpoint_directory():
+    from geort.trainer import GeoRTTrainer
+
+    with pytest.raises(ValueError, match="checkpoint_dir is required"):
+        GeoRTTrainer({"name": "unused"}, device="cpu")
 
 
 def test_training_size_options_control_streams(monkeypatch):
-    from geort.trainer import GeoRTTrainer, build_arg_parser
+    from geort.cli import build_parser
+    from geort.trainer import GeoRTTrainer
 
-    args = build_arg_parser().parse_args([
+    args = build_parser().parse_args([
+        "train",
+        "--dataset", "human",
+        "--robot", "allegro_right",
         "--coverage-samples", "7",
         "--coverage-batch-size", "3",
         "--gesture-batch-size", "2",
@@ -257,7 +268,18 @@ def test_geort_trainer_writes_and_resumes_lightning_checkpoints(tmp_path):
         ],
     }
     trainer.device = torch.device("cpu")
-    trainer.checkpoint_dir = tmp_path / "checkpoints"
+    trainer.checkpoint_dir = tmp_path / "run" / "checkpoints"
+    trainer.checkpoint_dir.mkdir(parents=True)
+    (trainer.checkpoint_dir.parent / "config.json").write_text(
+        json.dumps(
+            {
+                "dataset": "synthetic_dataset",
+                "robot": "synthetic_right",
+                "method": "geort",
+                "seed": 0,
+            }
+        )
+    )
     trainer.hand = SimpleNamespace(
         get_joint_limit=lambda: (
             -np.ones(joint_count, dtype=np.float32),
@@ -274,11 +296,9 @@ def test_geort_trainer_writes_and_resumes_lightning_checkpoints(tmp_path):
         size=(finger_count, 8, 3)
     ).astype(np.float32)
 
-    human_data = tmp_path / "human.npy"
-    np.save(
-        human_data,
-        np.random.default_rng(5).normal(size=(8, 21, 3)).astype(np.float32),
-    )
+    human_data = np.random.default_rng(5).normal(
+        size=(8, 21, 3)
+    ).astype(np.float32)
     options = {
         "epoch": 2,
         "save_every": 2,
@@ -289,20 +309,26 @@ def test_geort_trainer_writes_and_resumes_lightning_checkpoints(tmp_path):
 
     save_dir = trainer.train(human_data, **options)
 
+    assert save_dir == trainer.checkpoint_dir
     assert {path.name for path in save_dir.glob("*.ckpt")} == {
         "best.ckpt", "last.ckpt", "epoch=0001.ckpt"
     }
+    assert not (save_dir / "config.json").exists()
     assert not list(save_dir.glob("*.pth"))
-    assert json.loads((save_dir / "config.json").read_text())[
+    run_config = json.loads((save_dir.parent / "config.json").read_text())
+    assert run_config["dataset"] == "synthetic_dataset"
+    assert run_config[
         "training"
     ]["save_every"] == 2
+    assert "human_data" not in run_config["training"]
+    assert "urdf_path" not in run_config
 
     trainer.train(human_data, resume=save_dir, **{**options, "epoch": 3})
 
     assert torch.load(
         save_dir / "last.ckpt", map_location="cpu", weights_only=True
     )["epoch"] == 2
-    assert len(list((save_dir / "logs").glob("version_*/metrics.csv"))) == 2
+    assert not (save_dir / "logs").exists()
 
 
 @pytest.mark.parametrize("value", [0, -1])

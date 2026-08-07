@@ -15,7 +15,7 @@ from geort.utils.config_utils import (
     parse_config_joint_limit,
     parse_config_keypoint_info,
 )
-from geort.utils.path import get_checkpoint_root
+from geort.utils.path import get_run_root
 
 
 class GeoRTRetargetingModel:
@@ -77,16 +77,22 @@ def load_model(tag_or_path, epoch=None, checkpoint_root=None, device=None):
     '''
     candidate = Path(tag_or_path) if tag_or_path else None
     if candidate is not None and candidate.is_dir():
-        checkpoint_dir = candidate
+        resolved_dir = candidate
     else:
         if not tag_or_path:
             raise FileNotFoundError("Checkpoint tag or directory is required")
-        checkpoint_dir = Path(
-            checkpoint_root or get_checkpoint_root()) / str(tag_or_path)
+        resolved_dir = Path(
+            checkpoint_root or get_run_root()) / str(tag_or_path)
 
-    if not checkpoint_dir.is_dir():
+    if not resolved_dir.is_dir():
         raise FileNotFoundError(
-            f"Checkpoint directory not found: {checkpoint_dir}")
+            f"Run or checkpoint directory not found: {resolved_dir}")
+
+    checkpoint_dir = (
+        resolved_dir / "checkpoints"
+        if (resolved_dir / "checkpoints").is_dir()
+        else resolved_dir
+    )
 
     if epoch is None:
         model_path = checkpoint_dir / "best.ckpt"
@@ -97,4 +103,6 @@ def load_model(tag_or_path, epoch=None, checkpoint_root=None, device=None):
     else:
         model_path = checkpoint_dir / f"epoch={epoch:04d}.ckpt"
     config_path = checkpoint_dir / "config.json"
+    if not config_path.is_file() and checkpoint_dir.name == "checkpoints":
+        config_path = checkpoint_dir.parent / "config.json"
     return GeoRTRetargetingModel(model_path=model_path, config_path=config_path, device=device)

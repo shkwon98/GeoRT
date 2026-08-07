@@ -16,6 +16,9 @@ dependencies = [
   "tqdm>=4.66,<5",
 ]
 
+[project.scripts]
+geort = "geort.cli:main"
+
 [project.optional-dependencies]
 training = [
   "lightning>=2.6,<2.7",
@@ -39,11 +42,10 @@ manus = [
 dev = ["pytest>=7,<9"]
 
 [tool.setuptools.packages.find]
-include = ["geort", "geort.*", "experiments", "experiments.*"]
+include = ["geort", "geort.*"]
 
 [tool.setuptools.package-data]
 geort = ["config/*.json", "resources/**/*"]
-experiments = ["robots/allegro/*.json", "robots/wuji/*.json", "configs/*.json"]
 
 [[tool.uv.index]]
 name = "pytorch-cu128"

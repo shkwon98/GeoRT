@@ -1,9 +1,0 @@
-{
-  "name": "wuji_left",
-  "hand_side": "left",
-  "geort_config": "wuji_left",
-  "ros": {
-    "input_topic": "/teleop/human/hand_left/pose",
-    "output_topic": "/control/hand_left/hand_left_controller/joint_trajectory"
-  }
-}

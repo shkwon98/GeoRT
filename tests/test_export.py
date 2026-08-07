@@ -5,8 +5,9 @@ from geort.model import IKModel
 from geort.utils.config_utils import save_json
 
 
-def _write_checkpoint(checkpoint_root):
-    checkpoint_dir = checkpoint_root / "two_finger"
+def _write_checkpoint(run_root):
+    run_dir = run_root / "two_finger"
+    checkpoint_dir = run_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True)
     save_json(
         {
@@ -19,7 +20,7 @@ def _write_checkpoint(checkpoint_root):
             ],
             "joint": {"lower": [-1.0, -2.0], "upper": [1.0, 2.0]},
         },
-        checkpoint_dir / "config.json",
+        run_dir / "config.json",
     )
     model = IKModel([[0], [1]])
     last_state = model.state_dict()
@@ -45,18 +46,18 @@ def _write_checkpoint(checkpoint_root):
         {"state_dict": {f"ik_model.{key}": value for key, value in best_state.items()}},
         checkpoint_dir / "best.ckpt",
     )
-    return checkpoint_dir
+    return run_dir, checkpoint_dir
 
 
 def test_load_model_is_cpu_safe_and_selects_exact_epoch(tmp_path, monkeypatch):
-    checkpoint_root = tmp_path / "checkpoints"
-    checkpoint_dir = _write_checkpoint(checkpoint_root)
+    run_root = tmp_path / "runs"
+    run_dir, checkpoint_dir = _write_checkpoint(run_root)
     monkeypatch.chdir(tmp_path)
 
-    model = load_model(checkpoint_dir, device="cpu")
+    model = load_model(run_dir, device="cpu")
     last = load_model(checkpoint_dir, epoch=-1, device="cpu")
     epoch_zero = load_model("two_finger", epoch=0,
-                            checkpoint_root=checkpoint_root, device="cpu")
+                            checkpoint_root=run_root, device="cpu")
 
     assert model.device.type == "cpu"
     assert torch.all(model.model.nets[0][0].bias == 0.5)

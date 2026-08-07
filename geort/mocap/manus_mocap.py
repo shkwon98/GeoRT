@@ -10,7 +10,7 @@ from geort.mocap.manus_kinematics import manus_keypoints
 
 
 class ManusMocap:
-    def __init__(self):
+    def __init__(self, topic="/manus_quats"):
         import rclpy
         from rclpy.context import Context
         from rclpy.executors import SingleThreadedExecutor
@@ -25,24 +25,27 @@ class ManusMocap:
         self._executor.add_node(self._node)
         self._subscription = self._node.create_subscription(
             Float32MultiArray,
-            "/manus_quats",
+            topic,
             self._on_quaternions,
             10,
         )
         self._latest_data = None
+        self._new_data = False
         self._closed = False
 
     def _on_quaternions(self, message):
         try:
             quaternions = np.asarray(message.data).reshape(21, 4)
             self._latest_data = manus_keypoints(quaternions)
+            self._new_data = True
         except ValueError as error:
             self._node.get_logger().warning(str(error))
 
     def get(self):
         self._executor.spin_once(timeout_sec=0.0)
-        if self._latest_data is None:
+        if self._latest_data is None or not self._new_data:
             return {"result": None, "status": "no data"}
+        self._new_data = False
         return {"result": self._latest_data.copy(), "status": "recording"}
 
     def close(self):

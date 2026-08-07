@@ -76,7 +76,7 @@ def get_robot_cache_root(robot):
     name = robot.get("name")
     if not isinstance(name, str) or not name or Path(name).name != name:
         raise ValueError("robot name must be a single path component")
-    fingerprint = robot.get("urdf_sha256")
+    fingerprint = robot.get("robot_fingerprint")
     if fingerprint:
         if (
             not isinstance(fingerprint, str)
@@ -86,36 +86,6 @@ def get_robot_cache_root(robot):
                 for character in fingerprint.lower()
             )
         ):
-            raise ValueError("urdf_sha256 must be a hexadecimal digest")
+            raise ValueError("robot_fingerprint must be a hexadecimal digest")
         name = f"{name}-{fingerprint[:12].lower()}"
     return _get_writable_root() / "cache" / name
-
-
-def get_checkpoint_root():
-    return get_run_root()
-
-
-def get_human_data_output_path(human_data):
-    output_path = get_data_root() / human_data
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    return output_path
-
-
-def get_human_data(name_or_path):
-    path = Path(name_or_path).expanduser()
-    if path.is_file():
-        return path
-    if path.is_absolute():
-        raise FileNotFoundError(f"Human data file not found: {path}")
-
-    if not path.suffix:
-        path = path.with_suffix(".npy")
-    data_path = get_data_root() / path
-    if data_path.is_file():
-        return data_path
-
-    if ".." not in path.parts:
-        bundled_path = get_resource_root() / "samples" / path
-        if bundled_path.is_file():
-            return bundled_path
-    raise FileNotFoundError(f"Human data file not found: {data_path}")

@@ -27,10 +27,10 @@ ros2 run manus_client manus_right
 This publishes the existing Manus quaternion stream on `/manus_quats`.
 ### Deployment
 
-With `manus_right` running, start evaluation directly:
+With `manus_right` running, start a live rollout from an existing run:
 ```
-python -m geort.mocap.evaluation --mocap manus \
-  --hand YOUR_ROBOT_HAND_IN_CONFIG --ckpt-tag YOUR_CKPT
+uv run geort rollout --run YOUR_RUN --source live \
+  --config .geort/configs/manus_right.json
 ```
-The evaluator subscribes to `/manus_quats` directly. No localhost relay process
+The rollout subscribes to `/manus_quats` directly. No localhost relay process
 is required.

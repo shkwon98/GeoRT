@@ -2,235 +2,227 @@
 
 [![CC BY-NC 4.0 License](https://licensebuttons.net/l/by-nc/4.0/88x31.png)](https://creativecommons.org/licenses/by-nc/4.0/)
 
-Welcome! This repository contains the code for the paper "Geometric Retargeting: A Principled, Ultrafast Neural Hand Retargeting Algorithm".
+This repository contains the code for the paper “Geometric Retargeting: A
+Principled, Ultrafast Neural Hand Retargeting Algorithm.”
 
 ![Demo GIF](./images/demo.gif)
+
 ## Installation
-Install [uv](https://docs.astral.sh/uv/) first. Choose one environment:
+
+GeoRT uses CPython 3.12 and [uv](https://docs.astral.sh/uv/). Install only the
+extras needed for the current task:
 
 ```bash
-uv sync --no-dev       # Lightweight core runtime
-uv sync --all-extras   # Full research environment, including tests
+uv sync --extra training                         # Lightning, SAPIEN, Open3D
+uv sync --extra training --extra manus           # Manus + SAPIEN
+uv sync --extra training --extra mediapipe       # camera + SAPIEN
+uv sync --extra training --extra dexpilot        # DexPilot baseline + SAPIEN
+uv sync --all-extras --group dev                 # full development environment
 ```
 
-`uv.lock` is the reproducible dependency record. To keep the environment small,
-select only the needed extras in one command, for example
-`uv sync --extra training --extra mediapipe`. `training` provides Lightning,
-SAPIEN, and Open3D
-(Linux x86_64); `mediapipe` provides the camera demo; `manus` provides the
-Manus Python dependency; and `dexpilot` provides the baseline. ROS itself
-remains system-provided.
+ROS 2 and its message packages remain system-provided. `uv.lock` is the
+reproducible Python dependency record.
 
-GeoRT supports CPython 3.12.
+## Workflow
 
-For experiments across WebXR, Manus, MediaPipe, Allegro, Wuji, GeoRT, and the
-DexPilot baseline, see the [multi-device experiment guide](experiments/README.md).
+GeoRT has four user-facing commands:
 
-GeoRT stores local recordings, robot caches, checkpoints, and experiment runs
-under `.geort/` in the project directory:
+```text
+collect   live-record or import a mocap dataset
+train     train one GeoRT run
+rollout   view replay or live retargeting in SAPIEN
+evaluate  run batch inference and write metrics
+```
+
+The bundled robot names are `allegro_left`, `allegro_right`, `wuji_left`, and
+`wuji_right`. Manus, MediaPipe, and MetaQuest all enter the same canonical
+21-landmark coordinate frame before training or inference.
+
+### 1. Configure and collect mocap
+
+Keep machine-local capture settings under the ignored `.geort/configs/`
+directory:
+
+```bash
+mkdir -p .geort/configs
+```
+
+Example `.geort/configs/manus_right.json`:
+
+```json
+{
+  "mocap": "manus",
+  "hand_side": "right",
+  "topic": "/manus_quats",
+  "calibration": {
+    "scale": 1.0,
+    "rotation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+    "outward_sign": 1
+  }
+}
+```
+
+MediaPipe accepts `"camera": "realsense"` or `"camera": "webcam"` plus an
+optional `"device_index"`. MetaQuest accepts a PoseArray `"topic"` and expects
+25 poses. Calibrate `scale`, `rotation`, and `outward_sign` for the actual
+device instead of assuming the identity example is correct.
+
+Live collection:
+
+```bash
+uv run --locked --extra manus geort collect \
+  --mocap manus \
+  --dataset manus_right_001 \
+  --config .geort/configs/manus_right.json
+```
+
+Press Ctrl+C to finish Manus or MetaQuest capture. In the MediaPipe window,
+press `s` to record, `e` to pause, and `q` to save and quit.
+
+Import an existing NumPy recording with the same command plus `--input`.
+Use `--timestamps` when timestamps are stored separately; otherwise import
+assumes 30 Hz.
+
+```bash
+uv run --locked geort collect \
+  --mocap manus \
+  --dataset manus_right_001 \
+  --config .geort/configs/manus_right.json \
+  --input recordings/manus_right.npy
+```
+
+### 2. Train GeoRT
+
+```bash
+uv run --locked --extra training geort train \
+  --dataset manus_right_001 \
+  --robot allegro_right \
+  --run-id manus_allegro_geort_seed0 \
+  --device cuda \
+  --epoch 500 \
+  --save-every 50
+```
+
+For a robot without a complete cache, the first run also generates kinematic
+and collision data and trains the reusable FK and collision models. Lightning
+stores `best.ckpt` by lowest validation loss, `last.ckpt` for the final state,
+and an additional numbered checkpoint every `--save-every N` epochs. Set it to
+`0` to disable numbered checkpoints. Inference selects `best.ckpt` and falls
+back to `last.ckpt` when validation is disabled.
+
+Resume an interrupted run from `last.ckpt`; `--epoch` is the new total epoch
+count, and the dataset, robot, seed, and training settings come from the run:
+
+```bash
+uv run --locked --extra training geort train \
+  --resume manus_allegro_geort_seed0 \
+  --epoch 500 \
+  --device cuda
+```
+
+### 3. Evaluate
+
+GeoRT evaluation runs inference and metrics together:
+
+```bash
+uv run --locked --extra training geort evaluate \
+  --run manus_allegro_geort_seed0 \
+  --device cuda
+```
+
+DexPilot is an online baseline and has no training command. Its evaluation
+creates a run directly:
+
+```bash
+uv run --locked --extra training --extra dexpilot geort evaluate \
+  --dataset manus_right_001 \
+  --robot allegro_right \
+  --method dexpilot \
+  --run-id manus_allegro_dexpilot_seed0
+```
+
+### 4. Roll out in SAPIEN
+
+Replay the run's dataset:
+
+```bash
+uv run --locked --extra training geort rollout \
+  --run manus_allegro_geort_seed0 \
+  --source replay \
+  --device cuda
+```
+
+Use the same learned run with live input:
+
+```bash
+uv run --locked --extra training --extra manus geort rollout \
+  --run manus_allegro_geort_seed0 \
+  --source live \
+  --config .geort/configs/manus_right.json \
+  --device cuda
+```
+
+The main view shows the robot and predicted fingertips. The fixed-scale inset
+shows the canonical mocap skeleton, selected landmarks, coordinate axes, and a
+50 mm scale bar. This workflow commands only the SAPIEN hand; it does not send
+commands to physical hardware or a ROS hand controller.
+
+## Local artifacts
+
+All generated data stays under the project-local, Git-ignored `.geort/`:
 
 ```text
 .geort/
+├── configs/
 ├── data/
+│   └── manus_right_001/
+│       ├── raw.npz
+│       ├── canonical.npy
+│       └── metadata.json
 ├── cache/
+│   └── allegro_right-<fingerprint>/
+│       ├── kinematics.npz
+│       ├── fk.pth
+│       ├── collisions.npz
+│       └── collision.pth
 └── runs/
+    └── manus_allegro_geort_seed0/
+        ├── config.json
+        ├── checkpoints/
+        │   ├── best.ckpt
+        │   ├── last.ckpt
+        │   └── epoch=0049.ckpt
+        └── outputs/
+            ├── qpos.npz
+            ├── latency.npy
+            └── metrics.json
 ```
 
-The directory is ignored by Git and created when needed. Set `GEORT_HOME` only
-to place these files on another disk.
-## Quick Overview
-Upon completion, you will be able to train GeoRT and deploy the checkpoint in a clean and straightforward way. 
-### Training (1-2min):
-```bash
-uv run python -m geort.trainer --hand allegro_right --human-data human_alex \
-  --tag geort_1 --device cpu --epoch 50 --save-every 50
-```
+A dataset is independent of the target robot and method, so the same capture
+can be reused across all robot/method combinations. A run represents one
+dataset, robot, method, and seed. The cache fingerprint covers the robot
+configuration, URDF, and referenced mesh contents.
 
-This writes a run such as
-`.geort/runs/allegro_right_YYYY-MM-DD_HH-MM-SS_geort_1/`.
+## Adding a robot
 
-### Deploy in code
-```python
-import geort
+Use [the Allegro right config](./geort/config/allegro_right.json) or
+[the Wuji right config](./geort/config/wuji_right.json) as a reference. Keep a
+custom config and its assets in a project-relative location; absolute user
+paths are rejected from persisted run metadata. The config must define the
+hand side, URDF, base link, unique joint order, and fingertip link/joint groups.
 
-model = geort.load_model(
-    "/absolute/path/to/allegro_right_YYYY-MM-DD_HH-MM-SS_geort_1",
-    epoch=None,  # best.ckpt; use -1 for last.ckpt or a saved epoch number
-    device="cpu",
-)
-mocap = ...
-qpos = model.forward(mocap.get())
-```
-But before this, we need to complete some one-time system setup steps outlined below.
+## Notes
 
-**Useful Links**: [Notes and Troubleshooting](#notes-and-troubleshooting)
-## Getting Started
-We use the native Allegro Hand as an example. 
+- GeoRT assumes the robot fingertip workspace resembles the human hand
+  workspace. Keep the configured joint ranges physically meaningful.
+- Complex collision meshes can make SAPIEN loading unstable. Prefer simple
+  collision geometry when importing a new hand.
+- The canonical frame uses +X as the outward palm normal, +Y toward the thumb,
+  and +Z from wrist toward the middle-finger MCP. Positions use metres.
+- MediaPipe is convenient for debugging but is more sensitive to scale and
+  wrist-pose shifts than glove or VR tracking.
 
-### Step 1: Import your robot hand (one-time setup).
-Note: For the Allegro Hand, you can actually skip this step. However, please follow it if you want to import a customized robot hand.
+## Contact and license
 
-We just need to complete a quick setup process outlined below:
-
-1. Keep your custom robot URDF and meshes in a directory you control. The built-in Allegro assets are bundled with the package.
-2. Create a config file such as ``your_robot_name.json``. Pass its path with ``--hand /path/to/your_robot_name.json``; do not write into an installed package directory. Below is an abbreviated example; use [the Allegro right-hand config](./geort/config/allegro_right.json) as the complete reference.
-
-```
-{
-    "name": "allegro_right",  
-    "urdf_path": "/absolute/path/to/your_robot.urdf",
-    "base_link": "base_link",
-    "joint_order": [
-        "joint_0.0", "joint_1.0", "joint_2.0", "joint_3.0",
-        "joint_4.0", "joint_5.0", "joint_6.0", "joint_7.0",
-        "joint_8.0", "joint_9.0", "joint_10.0", "joint_11.0",
-        "joint_12.0", "joint_13.0", "joint_14.0", "joint_15.0"
-    ],
-    "fingertip_link": [
-        {
-            "name": "index",
-            "link": "link_4.0_tip",
-            "joint": ["joint_0.0", "joint_1.0", "joint_2.0", "joint_3.0"],
-            "center_offset": [0.0, 0.0, 0.0],
-            "human_hand_id": 8,
-        },
-        ...
-    ]
-}
-
-```
-Now, you can run this command to visualize your hand.
-```bash
-uv run python -m geort.env.hand --hand /path/to/your_robot_name.json
-```
-such as 
-```bash
-uv run python -m geort.env.hand --hand allegro_right
-```
-<span style="color:red"> If there is any segmentation error, please simplify the collision meshes or just remove all the `<collision>` fields in your URDF. </span> See the [Notes and Troubleshooting](#notes-and-troubleshooting) section.
-
-### Step 2: Collect human hand mocap data.
-Now we need to collect some human hand data for training the retargeting model. ``human_alex`` is bundled as an example. New recordings saved through GeoRT go to the writable data directory described above.
-
-```
-import geort
-import time
-
-# Dataset Name
-data_output_name = "human" # TODO(): Specify a name for this (e.g. your name)
-
-# Your data collection loop.
-mocap = YourAwesomeMocap() # TODO(): your mocap system.
-                           # Define a mocap.get() method.
-                           # Apologies, you still have to do this...
- 
-data = []
-
-for step in range(5000):       # collect 5000 data points.
-    hand_keypoint = mocap.get() # mocap.get() return [N, 3] numpy array.
-    data.append(hand_keypoint)
-    
-    time.sleep(0.01)            # take a short break.
-
-# finish data collection.
-geort.save_human_data(data, data_output_name)
-```
-Use ``geort.save_human_data`` API -- this can simplify your effort in specifying the path. This dataset can be reloaded later using **data_output_name**. 
-
-During the data collection process, try to 1. fully stretch each finger and explore its fingertip moving range and 2. perform pinch grasps. Ensure that your fingers feel natural and comfortable—since during teleoperation deployment, you will use these recorded gestures to control the robot! Please avoid any unnatural or strained movements.
-
-We understand that most users likely have their own mocap systems. However, for demonstration purposes, we provide a simple mocap solution based on MediaPipe. Please note, this is intended only for demo use and not for deployment; we will explain this in more detail later.
-
-```bash
-uv run python -m geort.mocap.mediapipe_mocap --name human
-```
-Run `uv sync --extra mediapipe` first. The command generates a dataset named ``human``. Refer to the file for instructions. When you see the pop-up window, press ``s`` to start recording and ``q`` to finish.
-
-**Note:** Please ensure that the hand frame orientation is consistent between your motion capture system and the hand URDF (but fortunately the origin does not require any alignment and you can just set it to palm center). In our provided mocap example, we support the **right** hand using the following convention:+Y axis: from the palm center to the thumb. +Z axis: from the palm center to the middle fingertip. +X axis: palm normal (pointing out of the palm). 
-
-### Step 3: Train the Model
-Assuming you saved ``your_robot_name.json`` somewhere writable as described in Step 1, and set ``data_output_name`` to ``human`` in Step 2, run the following command. ``TAG`` is appended to the generated experiment directory.
-
-```bash
-uv run python -m geort.trainer --hand /path/to/your_robot_name.json --human-data human \
-  --tag TAG --device cuda --epoch 50 --save-every 50
-```
-
-Let it train for about 30–50 epochs (approximately 1–2 minutes). You can press Ctrl+C to stop early if you wish. 
-
-If this is the first time you’re training for a new hand, an additional 5 minutes will be needed to train the neural FK model — this only happens once. The bundled Allegro FK checkpoint loads directly.
-
-For demo purpose, ``human_alex`` is bundled with GeoRT. For adapting it to a right Allegro hand, just run
-
-```bash
-uv run python -m geort.trainer --hand allegro_right --human-data human_alex \
-  --tag geort_1 --device cpu --epoch 50 --save-every 50
-```
-This creates ``.geort/runs/allegro_right_<timestamp>_geort_1/``. Resume the same experiment (with the same hand, data, seed, validation split, and loss settings) with:
-
-```bash
-uv run python -m geort.trainer --hand allegro_right --human-data human_alex \
-  --resume /absolute/path/to/allegro_right_<timestamp>_geort_1 \
-  --device cpu --epoch 100 --save-every 50
-```
-
-Lightning keeps `last.ckpt` for resume and `best.ckpt` for the lowest
-deterministic validation loss. `--save-every N` additionally keeps a numbered
-checkpoint every N completed epochs; use `0` to disable numbered checkpoints.
-Inference uses `best.ckpt` by default and falls back to `last.ckpt` when no
-validation split is configured. Metrics are written under `logs/version_N/`.
-
-### Step 4: Deploy!
-Ok, now we are all set. Use the following code to import and deploy the trained model. 
-
-```python
-import geort
-
-experiment_dir = '/absolute/path/to/allegro_right_<timestamp>_geort_1'
-model = geort.load_model(experiment_dir, epoch=None, device='cpu')
-
-mocap = YourAwesomeMocap()      # TODO: your mocap.
-robot = YourRobustRobotHand()   # TODO: your robot.
-
-while True:
-    qpos = model.forward(mocap.get()) # This is the retargeted qpos. 
-                                      # (Note: unnormalized joint angle)
-    robot.command(qpos)               # execute!
-
-```
-The unified evaluator supports replay, MediaPipe, and Manus inputs. We
-recommend a glove-based mocap system instead of MediaPipe because vision-based
-mocap has significant input distribution shift during deployment.
-
-The simplest way for testing is to use the replay evaluation as below. The
-main view shows the robot and predicted fingertips. A fixed metric inset at
-the upper right shows the canonical mocap skeleton, the input landmarks used
-by GeoRT, coordinate axes, and a 50 mm scale bar.
-```bash
-uv run python -m geort.mocap.evaluation --mocap replay \
-  --hand allegro_right --ckpt-tag /absolute/path/to/YOUR_EXPERIMENT \
-  --data YOUR_TRAINING_DATA
-```
-For instance, if ``human`` is in the configured writable data directory
-```bash
-uv run python -m geort.mocap.evaluation --mocap replay \
-  --hand allegro_right --ckpt-tag /absolute/path/to/YOUR_EXPERIMENT \
-  --data human
-```
-## Contributing
-Feel free to contribute your robot model and mocap system to the GeoRT repository!
-
-## [Notes and Troubleshooting](#notes-and-troubleshooting)
-1. **Note:Joint Range Clipping.** One core assumption of GeoRT is that the motion range of robot fingertips resembles that of human hands. To maintain realistic fingertip poses, please clip your robot's joint movement ranges appropriately and avoid unnatural configurations.
-
-2. **Simulation Errors with New Hands?** Simulation errors (segmentation fault) may occur when importing new robotic hands (e.g. [this issue](https://github.com/facebookresearch/GeoRT/issues/7)), and this is usually caused by collision meshes. To avoid this, ensure that the collision meshes defined in your URDF are simple—such as boxes or basic convex shapes. Alternatively, you can remove all <collision> elements from the URDF to eliminate these issues entirely. 
-
-3. **Hand Coordinate System (Frame) Convention** Please ensure that the hand frame orientation is consistent between your motion capture system and the hand URDF (but fortunately the origin does not require any alignment and you can just set it to palm center). In our provided mocap example, we support the **right** hand using the following convention:+Y axis: from the palm center to the thumb. +Z axis: from the palm center to the middle fingertip. +X axis: palm normal (pointing out of the palm). 
-
-
-## Contact Us
-For any inquiries, please open an issue or contact the authors via email at ``zhaohengyin@cs.berkeley.edu``
-<!-- ## Bibliography -->
-
-## License
-CC-by-NC license
+For questions, open an issue or contact `zhaohengyin@cs.berkeley.edu`.
+The project is licensed under CC BY-NC 4.0.
